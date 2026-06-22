@@ -1,0 +1,19 @@
+[Unit]
+Description=Bellwether crypto trading bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/bellwether
+# Safe default: runs mode:kraken (real prices, paper fills) or sim — NO real
+# orders. To trade real money, append `--live` to the command below, but only
+# after you've watched it in paper and set conservative risk caps.
+ExecStart=/home/ubuntu/bellwether/.venv/bin/python -m bellwether.cli --config config.yaml run
+Restart=always
+RestartSec=15
+# Logs go to journald: `journalctl -u bellwether -f`
+
+[Install]
+WantedBy=multi-user.target

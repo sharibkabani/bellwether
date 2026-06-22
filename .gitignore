@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+bellwether-data/
+*.db
+.env
+config.yaml
+kalshi_private_key.pem
+.pytest_cache/
+.DS_Store
+*.egg-info/

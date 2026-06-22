@@ -1,0 +1,10 @@
+requests>=2.31
+pyyaml>=6.0
+rich>=13.0
+python-dotenv>=1.0
+pytest>=8.0
+
+# Optional: only needed if you set llm.provider: anthropic (Claude).
+# The default provider is Ollama (free, local) via the OpenAI-compatible API,
+# which needs no extra package.
+# anthropic>=0.40

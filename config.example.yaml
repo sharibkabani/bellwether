@@ -1,0 +1,71 @@
+# Bellwether configuration. Copy to config.yaml and edit.
+# Secrets (API keys) do NOT go here — set them in .env (see .env.example).
+
+mode: sim                   # sim (offline simulator) | kraken (real Kraken prices)
+data_dir: ./bellwether-data
+poll_interval_sec: 900      # seconds between trading cycles (900 = 15 min)
+daily_report_hour: 17       # local hour (0-23) to send the daily digest
+
+risk:
+  starting_bankroll: 5000.0         # paper starting cash (USD)
+  max_position_per_trade: 800.0     # max $ in any single coin
+  max_total_exposure: 4000.0        # max gross $ deployed
+  max_daily_spend: 2000.0           # max $ of new entries per day
+  max_open_positions: 6
+  position_pct: 0.15                # base fraction of equity per trade (scaled by confidence)
+  min_expected_return: 0.04         # require a 4%+ expected move to enter
+  min_confidence: 0.55              # require 55%+ signal confidence
+  stop_loss_pct: 0.10               # close a position down 10% (crypto is volatile)
+  take_profit_pct: 0.20             # close a position up 20%
+  max_drawdown_pct: 0.25            # kill switch: halt if equity falls 25% from peak
+  allow_short: false                # Kraken spot is long-only
+
+strategy:
+  use_momentum: true
+  use_trending: true                # the Claude-powered AI signal
+  momentum_weight: 1.0
+  trending_weight: 2.0              # trust the AI signal more than raw momentum
+  categories: []                    # [] = all; or e.g. ["Major", "L1"]
+  max_symbols_per_cycle: 25         # cap AI calls per cycle to control cost
+  # Kraken trading universe. ``pair`` is Kraken's market code (BTC = XBTUSD,
+  # DOGE = XDGUSD; most others are <SYMBOL>USD). Ignored by the sim.
+  universe:
+    - { symbol: BTC,  pair: XBTUSD,  name: Bitcoin,    category: Major }
+    - { symbol: ETH,  pair: ETHUSD,  name: Ethereum,   category: Major }
+    - { symbol: SOL,  pair: SOLUSD,  name: Solana,     category: L1 }
+    - { symbol: XRP,  pair: XRPUSD,  name: XRP,         category: Payments }
+    - { symbol: DOGE, pair: XDGUSD,  name: Dogecoin,   category: Meme }
+    - { symbol: ADA,  pair: ADAUSD,  name: Cardano,    category: L1 }
+    - { symbol: AVAX, pair: AVAXUSD, name: Avalanche,  category: L1 }
+    - { symbol: LINK, pair: LINKUSD, name: Chainlink,  category: DeFi }
+
+llm:
+  enabled: true
+  provider: groq                    # groq (best free) | ollama (free, local, no key) | openrouter | openai | anthropic
+  model: ""                         # blank = provider default (groq -> openai/gpt-oss-120b)
+  base_url: ""                      # blank = provider default
+  max_tokens: 2000
+  # Best free option (default): Groq — a free API key (no credit card) at
+  #   console.groq.com runs openai/gpt-oss-120b, a 120B-class reasoner. Set
+  #   GROQ_API_KEY in .env. ~100 calls/day is far under the free daily cap.
+  # No-key local alternative: provider: ollama  +  `ollama pull qwen3:8b`.
+  # Without a reachable model the bot simply falls back to the momentum signal.
+
+news:
+  enabled: true                     # fetch live crypto headlines (free RSS) for the AI signal
+  feeds: []                         # [] = built-in feeds (CoinDesk, Cointelegraph, Decrypt)
+  max_headlines: 40                 # how many recent headlines to pull per cycle
+  per_coin: 3                       # headlines matched to each coin in the prompt
+  general: 6                        # top market headlines included for context
+
+kraken:
+  api_base: https://api.kraken.com
+
+notify:
+  channel: console                  # console | email | sms
+  email_to: ksharib05@gmail.com
+  email_from: ksharib05@gmail.com
+  smtp_host: smtp.gmail.com
+  smtp_port: 587
+  sms_to: "+16477666778"
+  sms_from: ""                      # your Twilio number
