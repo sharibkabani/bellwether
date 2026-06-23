@@ -141,6 +141,66 @@ class KrakenVenue:
                 out[inst.symbol] = q
         return out
 
+    # --- universe discovery ----------------------------------------------
+
+    def discover_candidates(self, min_volume_usd: float = 0.0) -> list[dict]:
+        """Return Kraken's tradable USD spot pairs with 24h volume in USD.
+
+        Pulls every pair from the public ``AssetPairs`` endpoint, keeps the
+        USD-quoted spot markets, then batches ``Ticker`` to get 24h volume and
+        the day's move. Used by the learning loop to find new coins beyond the
+        configured universe. Fail-soft: any error yields an empty list."""
+        try:
+            pairs = self._public("AssetPairs", {})
+        except Exception:
+            return []
+
+        usd: dict[str, dict] = {}  # ticker_pair_key -> {symbol, pair, name}
+        for key, meta in pairs.items():
+            quote = meta.get("quote")
+            altname = meta.get("altname", "")
+            wsname = meta.get("wsname", "")
+            if quote not in ("ZUSD", "USD") or ".d" in key:  # skip dark-pool / non-USD
+                continue
+            base = (wsname.split("/")[0] if "/" in wsname else altname.replace("USD", "")) or altname
+            symbol = base.lstrip("X").upper() if len(base) > 3 and base.startswith("X") else base.upper()
+            usd[key] = {"symbol": symbol, "pair": altname or key, "name": symbol}
+
+        if not usd:
+            return []
+
+        candidates: list[dict] = []
+        # Ticker accepts many comma-separated pairs; chunk to stay well within limits.
+        keys = list(usd.keys())
+        for i in range(0, len(keys), 100):
+            chunk = keys[i : i + 100]
+            try:
+                result = self._public("Ticker", {"pair": ",".join(chunk)})
+            except Exception:
+                continue
+            for key, t in result.items():
+                info = usd.get(key)
+                if info is None:
+                    continue
+                try:
+                    last = float(t["c"][0])
+                    vol_base = float(t["v"][1])          # 24h base volume
+                    opening = float(t.get("o", last))
+                except (KeyError, IndexError, ValueError, TypeError):
+                    continue
+                volume_usd = vol_base * last
+                if volume_usd < min_volume_usd:
+                    continue
+                candidates.append(
+                    {
+                        **info,
+                        "volume_usd": volume_usd,
+                        "change_24h": (last / opening - 1.0) if opening else 0.0,
+                        "last": last,
+                    }
+                )
+        return candidates
+
     # --- orders -----------------------------------------------------------
 
     def place_order(self, order: Order) -> Fill | None:

@@ -74,12 +74,16 @@ class TrendingStrategy(Strategy):
         max_symbols: int = 25,
         per_coin_headlines: int = 3,
         general_headlines: int = 6,
+        lessons_provider=None,
     ):
         self._client = client
         self._news = news
         self._max_symbols = max_symbols
         self._per_coin = per_coin_headlines
         self._general = general_headlines
+        # Optional callable returning the bot's own trading-journal lessons, so
+        # each day's analysis is informed by what past predictions got wrong.
+        self._lessons_provider = lessons_provider
         self._error: str | None = None if client else "no LLM client configured"
 
     @property
@@ -123,12 +127,22 @@ class TrendingStrategy(Strategy):
             top = "\n".join(f"- {h.title} ({h.source})" for h in headlines[: self._general])
             general = f"\nTop crypto headlines right now:\n{top}\n"
 
+        lessons = ""
+        if self._lessons_provider is not None:
+            try:
+                text = self._lessons_provider()
+                if text:
+                    lessons = f"\nLessons from your own past predictions (apply them):\n{text}\n"
+            except Exception:
+                lessons = ""
+
         prompt = (
             f"Today is {today}. Assess these {len(batch)} crypto assets, using the "
             f"recent news where relevant:\n"
             + "\n".join(lines)
             + "\n"
             + general
+            + lessons
             + "\n"
             + _FORMAT
         )

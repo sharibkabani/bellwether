@@ -10,24 +10,38 @@ and ranks opportunities.
 from __future__ import annotations
 
 from collections import defaultdict
+from typing import Callable
 
 from ..models import Direction, Instrument, Quote, Signal, TradeIdea
 from .base import Strategy
 
 
 class SignalEngine:
-    def __init__(self, strategies: list[tuple[Strategy, float]]):
-        self._strategies = strategies  # list of (strategy, weight)
+    def __init__(
+        self,
+        strategies: list[tuple[Strategy, float]],
+        weight_fn: Callable[[str, str, float], float] | None = None,
+    ):
+        self._strategies = strategies  # list of (strategy, base_weight)
+        # weight_fn(source, symbol, base_weight) -> effective weight. Lets the
+        # learning loop scale a source's trust per coin (reliability) and globally
+        # (auto-tuned strategy weight) without the engine knowing the details.
+        self._weight_fn = weight_fn or (lambda source, symbol, base: base)
+        self.last_signals: list[Signal] = []  # raw per-strategy signals, for the journal
 
     def generate(
         self, instruments: list[Instrument], quotes: dict[str, Quote]
     ) -> list[TradeIdea]:
         by_symbol = {i.symbol: i for i in instruments}
         grouped: dict[str, list[tuple[Signal, float]]] = defaultdict(list)
-        for strategy, weight in self._strategies:
+        raw: list[Signal] = []
+        for strategy, base_weight in self._strategies:
             for sig in strategy.evaluate(instruments, quotes):
                 if sig.symbol in by_symbol and sig.symbol in quotes:
+                    raw.append(sig)
+                    weight = self._weight_fn(sig.source, sig.symbol, base_weight)
                     grouped[sig.symbol].append((sig, weight))
+        self.last_signals = raw
 
         ideas = []
         for symbol, weighted in grouped.items():

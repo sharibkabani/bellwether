@@ -31,6 +31,11 @@ class ReportData:
     trades_today: list = field(default_factory=list)
     halted: bool = False
     mode: str = "sim"
+    # --- learning loop (what the bot learned / changed) ---
+    lessons: str = ""
+    config_changes: list = field(default_factory=list)   # changelog rows (today)
+    reliability: list = field(default_factory=list)       # reliability rows
+    discovered: list = field(default_factory=list)        # active + probation coins
 
 
 def _start_of_today_ts() -> float:
@@ -62,6 +67,16 @@ def build_report(
         for pos in sorted(portfolio.positions(), key=lambda p: p.symbol)
     ]
 
+    # Learning-loop context (fail-soft: missing data just renders an empty section).
+    try:
+        latest = storage.latest_reflection()
+        lessons = latest["lessons"] if latest else ""
+        config_changes = storage.changes_since(day_start_ts)
+        reliability = storage.all_reliability()
+        discovered = storage.discovered(["active", "probation"])
+    except Exception:
+        lessons, config_changes, reliability, discovered = "", [], [], []
+
     return ReportData(
         date=_dt.date.today().isoformat(),
         equity=equity,
@@ -75,6 +90,10 @@ def build_report(
         trades_today=storage.fills_since(day_start_ts),
         halted=halted,
         mode=mode,
+        lessons=lessons or "",
+        config_changes=config_changes,
+        reliability=reliability,
+        discovered=discovered,
     )
 
 
@@ -134,7 +153,58 @@ def render_text(d: ReportData) -> str:
     else:
         lines.append("Open positions: none.")
 
+    _render_learning_text(d, lines)
     return "\n".join(lines)
+
+
+def _render_learning_text(d: ReportData, lines: list[str]) -> None:
+    has_learning = d.config_changes or d.lessons or d.discovered or d.reliability
+    if not has_learning:
+        return
+    lines.append("")
+    lines.append("— Learning —")
+
+    if d.config_changes:
+        lines.append(f"Self-adjustments today ({len(d.config_changes)}):")
+        for c in d.config_changes:
+            lines.append(f"  {c['field']}: {c['old_value']} → {c['new_value']} ({c['reason']})")
+    else:
+        lines.append("Self-adjustments today: none.")
+
+    if d.discovered:
+        probation = [r["symbol"] for r in d.discovered if r["status"] == "probation"]
+        active = [r["symbol"] for r in d.discovered if r["status"] == "active"]
+        if active:
+            lines.append(f"Discovered (active): {', '.join(active)}")
+        if probation:
+            lines.append(f"On probation (tiny size): {', '.join(probation)}")
+
+    if d.reliability:
+        adjusted = sorted(
+            (r for r in d.reliability if abs(r["multiplier"] - 1.0) > 1e-6),
+            key=lambda r: r["multiplier"],
+            reverse=True,
+        )
+        shown, seen = [], set()
+        for r in adjusted[:3] + adjusted[-2:]:  # most then least trusted
+            key = (r["source"], r["symbol"])
+            if key not in seen:
+                seen.add(key)
+                shown.append(r)
+        if shown:
+            lines.append("Source trust (most/least trusted):")
+            for r in shown:
+                lines.append(
+                    f"  {r['source']}·{r['symbol']}: {r['multiplier']:.2f}x "
+                    f"({r['hit_rate']:.0%} hit, {r['samples']} preds)"
+                )
+
+    if d.lessons:
+        lines.append("Lessons from the journal:")
+        for line in str(d.lessons).splitlines():
+            line = line.strip()
+            if line:
+                lines.append(f"  {line.lstrip('- ').rstrip()}" if line.startswith("-") else f"  {line}")
 
 
 def render_html(d: ReportData) -> str:
@@ -178,7 +248,46 @@ def render_html(d: ReportData) -> str:
       <th>Symbol</th><th>Side</th><th>Shares</th><th>Avg</th><th>Now</th><th>P&L</th></tr>
     {rows or '<tr><td colspan=6>None</td></tr>'}
   </table>
+  {_render_learning_html(d)}
 </div>"""
+
+
+def _render_learning_html(d: ReportData) -> str:
+    if not (d.config_changes or d.lessons or d.discovered or d.reliability):
+        return ""
+    parts = ['<h3>Learning</h3>']
+
+    changes = "".join(
+        f"<li><code>{c['field']}</code>: {c['old_value']} &rarr; <b>{c['new_value']}</b> "
+        f"<span style='color:#777'>— {c['reason']}</span></li>"
+        for c in d.config_changes
+    )
+    parts.append(
+        f"<p style='margin:4px 0;color:#555'>Self-adjustments today "
+        f"({len(d.config_changes)}):</p><ul>{changes or '<li>None</li>'}</ul>"
+    )
+
+    if d.discovered:
+        active = ", ".join(r["symbol"] for r in d.discovered if r["status"] == "active")
+        probation = ", ".join(r["symbol"] for r in d.discovered if r["status"] == "probation")
+        bits = []
+        if active:
+            bits.append(f"<b>active:</b> {active}")
+        if probation:
+            bits.append(f"<b>probation (tiny size):</b> {probation}")
+        if bits:
+            parts.append(f"<p style='margin:4px 0;color:#555'>Discovered coins — {' · '.join(bits)}</p>")
+
+    if d.lessons:
+        items = "".join(
+            f"<li>{line.lstrip('- ').strip()}</li>"
+            for line in str(d.lessons).splitlines()
+            if line.strip()
+        )
+        if items:
+            parts.append(f"<p style='margin:4px 0;color:#555'>Journal lessons:</p><ul>{items}</ul>")
+
+    return "".join(parts)
 
 
 def render_sms(d: ReportData) -> str:

@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# `bw` — convenience wrapper for operating Bellwether on the VM.
+#
+# Install once:  sudo ln -sf /home/ubuntu/bellwether/deploy/bw /usr/local/bin/bw
+# (Make sure no shadowing `alias bw=...` exists in your shell rc.)
+#
+#   bw watch     tail the bot + auto-updater logs together (see deploys land live)
+#   bw update    check GitHub for a new commit and deploy it right now
+#   bw run|once|reflect|report|status|markets [...]   → bellwether CLI
+set -euo pipefail
+
+DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+
+case "${1:-}" in
+  watch)
+    # Both units in one stream: you'll see "bellwether-update: ... deploying",
+    # the service stop/start, then the bot's cycles running the new code.
+    exec journalctl -u bellwether -u bellwether-update -n 60 -f
+    ;;
+  update)
+    echo "Checking GitHub for updates…"
+    exec sudo systemctl start bellwether-update.service
+    ;;
+  ""|-h|--help)
+    echo "usage: bw <watch|update|run|once|reflect|report|status|markets> [args]"
+    [ -z "${1:-}" ] && exit 1 || exit 0
+    ;;
+  *)
+    # Forward everything else to the CLI in the project venv + project config.
+    exec "$DIR/.venv/bin/python" -m bellwether.cli --config "$DIR/config.yaml" "$@"
+    ;;
+esac

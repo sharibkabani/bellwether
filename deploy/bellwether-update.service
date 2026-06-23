@@ -1,0 +1,11 @@
+[Unit]
+Description=Bellwether push-to-deploy (git pull + restart on new commits)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs as root so it can restart the bellwether service; the script drops to the
+# repo owner for all git/pip work. Output goes to journald under this unit, so
+# `journalctl -u bellwether-update` (and `bw watch`) shows each deploy.
+ExecStart=/home/ubuntu/bellwether/deploy/autoupdate.sh

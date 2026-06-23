@@ -51,6 +51,40 @@ llm:
   # No-key local alternative: provider: ollama  +  `ollama pull qwen3:8b`.
   # Without a reachable model the bot simply falls back to the momentum signal.
 
+learning:
+  enabled: true                     # the self-learning loop (prediction journal + daily reflection)
+  # --- prediction journal / scoring ---
+  prediction_horizon_hours: 24.0    # score a logged prediction against price this far ahead
+  min_samples_to_adapt: 20          # require N scored predictions before adapting (slow learning)
+  move_threshold: 0.01              # a <1% move counts as "flat" when grading direction
+  # --- reliability weights (bounded trust per strategy x coin) ---
+  reliability_min: 0.5              # a source can be down-weighted to at most 0.5x
+  reliability_max: 1.5              # ...and up-weighted to at most 1.5x
+  reliability_prior_strength: 10.0  # regularize hit rate toward 0.5 (resist noise)
+  # --- bounded config auto-tuning (SELECTION only; risk limits are immutable) ---
+  autotune_enabled: true
+  min_confidence_floor: 0.50        # bot may nudge min_confidence only within [floor, ceiling]
+  min_confidence_ceiling: 0.70
+  min_confidence_step: 0.02
+  weight_min: 0.5                   # strategy weights stay within [weight_min, weight_max]
+  weight_max: 3.0
+  weight_step: 0.25
+  # --- universe discovery ---
+  discovery_enabled: true
+  discovery_min_volume_usd: 5000000 # liquidity floor for a new coin to be considered
+  discovery_max_new_per_day: 3
+  probation_days: 7.0               # watch a new coin this long before it can graduate
+  probation_min_samples: 8
+  probation_size_pct: 0.25          # probation coins trade at 25% of normal size
+  retire_min_samples: 12
+  retire_max_hit_rate: 0.40         # retire a coin whose hit rate stays at/below this
+  # --- reflection memory ---
+  memory_file: memory/lessons.md    # the bot's trading journal (also stored in the DB)
+  reflect_use_llm: true             # have the model write its own lessons each day
+  # NOTE: max_position_per_trade, max_daily_spend, max_drawdown_pct, stop_loss_pct
+  # and the other capital-protection limits above are HUMAN-OWNED and can never be
+  # changed by the bot. It may only adapt selection aggressiveness within the bounds here.
+
 news:
   enabled: true                     # fetch live crypto headlines (free RSS) for the AI signal
   feeds: []                         # [] = built-in feeds (CoinDesk, Cointelegraph, Decrypt)

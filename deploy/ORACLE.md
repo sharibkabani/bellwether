@@ -107,15 +107,52 @@ sudo systemctl daemon-reload && sudo systemctl restart bellwether
 
 ---
 
+## 5. Push-to-deploy (optional, recommended)
+
+Make the box update itself whenever you `git push`. A `systemd` timer checks the
+GitHub remote every 2 minutes; on a new commit it fast-forwards, reinstalls deps
+only if `requirements.txt` changed, and restarts the bot. It's **pull-based** —
+no inbound ports, no secrets on GitHub — matching the outbound-only posture.
+
+> Requires the code to be a **git clone** (Section 2, Option B), not an scp copy,
+> and the repo to be reachable (public, or with credentials configured for the
+> `ubuntu` user). With no upstream branch the updater just no-ops.
+
+One-time install on the VM (after the bot service from Section 4 is running):
+```bash
+cd ~/bellwether && git pull          # get these deploy files onto the box once
+sudo cp deploy/bellwether-update.service deploy/bellwether-update.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now bellwether-update.timer
+
+# Install the `bw` helper on your PATH (remove any old `alias bw=` first):
+sudo ln -sf ~/bellwether/deploy/bw /usr/local/bin/bw
+```
+
+After this, the workflow is just: **push on your Mac → wait ≤2 min → it deploys.**
+Watch it happen live:
+```bash
+bw watch        # tails the bot + auto-updater; you'll see the deploy land + new cycles
+```
+When a push lands you'll see `bellwether-update: new commit … — deploying`, the
+service restart, then the bot's cycles running the new code. To force a check now
+instead of waiting for the timer: `bw update`.
+
+---
+
 ## Operating it
+
+The `bw` helper (installed above) wraps everything; the raw commands are shown too.
 
 | Task | Command |
 |---|---|
-| Live logs | `journalctl -u bellwether -f` |
+| Watch deploys + trading live | `bw watch` (= `journalctl -u bellwether -u bellwether-update -f`) |
+| Deploy latest now | `bw update` (= `sudo systemctl start bellwether-update.service`) |
 | Status | `systemctl status bellwether` |
 | Stop / start | `sudo systemctl stop bellwether` / `start` |
-| Update code | `git pull` (or re-scp) → `sudo systemctl restart bellwether` |
-| One-off report | `cd ~/bellwether && .venv/bin/python -m bellwether.cli --config config.yaml report` |
+| Manual update (no auto-deploy) | `git pull` → `sudo systemctl restart bellwether` |
+| Run the learning loop now | `bw reflect` |
+| One-off report | `bw report` |
 
 ## Security checklist (real money is involved)
 - [ ] Kraken API key has **Query Funds + Create/Modify Orders only** — **Withdraw OFF**.

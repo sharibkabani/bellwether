@@ -95,6 +95,30 @@ The provider is one config line:
 
 ---
 
+## The self-learning loop
+
+Trading runs every 15 minutes; **learning runs once a day** in a separate *reflection* job (`bellwether reflect`, also fired automatically before the daily report). The bot compounds over time instead of repeating the same mistakes:
+
+1. **Prediction journal.** Every cycle, each strategy's signal (coin, expected return, confidence, rationale, price-at-the-time) is written down. You can't learn from mistakes you never recorded — this is the substrate everything else learns from. Once a prediction's horizon (default 24h) elapses, it's **scored** against what the price actually did.
+2. **Reflection memory.** The model is shown its own scorecard (hit rate + calibration per coin/strategy, realized P&L) and writes a few short **lessons** into its trading journal (`memory/lessons.md`), which are injected into the next day's analyst prompt — exactly how a disciplined human reviews their journal. No retraining; just better context.
+3. **Reliability weights.** Each *(strategy × coin)* earns a bounded trust multiplier (**0.5×–1.5×**) from its track record. Consistently-wrong sources get quietly down-weighted, accurate ones up-weighted — regularized toward the prior and gated on a minimum sample count, so it can't overfit to noise or run away.
+4. **Universe discovery.** Daily, the bot pulls Kraken's tradable USD pairs with 24h volume, screens for a **liquidity floor**, and (optionally) lets the model nominate additions. New coins enter on **probation** — watched and traded at a fraction of normal size — and only **graduate** to full sizing once they prove out. Chronically illiquid or unprofitable coins are **retired**.
+
+### Bounded autonomy — the safety line ⚠️
+
+Self-learning bots blow up when they edit their own risk settings. So the line is **hard and enforced in code**, not by convention:
+
+| | |
+|---|---|
+| **Immutable (human-owned)** | `max_position_per_trade`, `max_daily_spend`, `max_drawdown_pct`, `stop_loss_pct`, `take_profit_pct`, `max_total_exposure`, `max_open_positions` — the bot can **never** touch these |
+| **Adaptable (selection only, within hard bounds)** | `min_confidence` (nudged only within `[0.50, 0.70]`), strategy weights (within `[0.5, 3.0]`) |
+
+Every self-change is small, evidence-gated, clamped to its band, written to a **changelog**, and surfaced in the daily email so a human always sees what the bot adjusted and why. The honest caveat: short-term crypto returns are extremely noisy — the durable wins here are **calibration** (stop being overconfident), **avoiding bad coins**, and the **reflection journal**. It makes the bot more disciplined; it doesn't magic up alpha. Slow learning beats fast overfitting.
+
+Turn the whole loop off with `learning.enabled: false`.
+
+---
+
 ## Quick start
 
 ```bash
@@ -104,7 +128,8 @@ cp config.example.yaml config.yaml          # sim mode by default
 
 python -m bellwether.cli markets             # universe + quotes + signals
 python -m bellwether.cli once                # run one trading cycle
-python -m bellwether.cli run                 # start the always-on loop
+python -m bellwether.cli run                 # start the always-on loop (+ daily reflection)
+python -m bellwether.cli reflect             # run the learning loop now: score, adapt, discover
 python -m bellwether.cli status              # show the portfolio / daily report
 ```
 
@@ -148,7 +173,7 @@ The live client ([`venues/kraken.py`](bellwether/venues/kraken.py)):
 ## Testing
 
 ```bash
-pytest          # 60 tests
+pytest          # 73 tests
 ```
 
 Coverage spans the simulator, signed portfolio accounting, **live wallet reconciliation** (keep cost basis, adopt untracked holdings, drop sold positions, ignore dust, re-baseline P&L), the **withhold-entries-on-failed-reconcile** safety path, every risk control (conviction sizing, caps, stop-loss/take-profit, kill switch), signal blending, the **LLM client factory + defensive JSON parsing**, the **news RSS parser + relevance matching**, the Kraken **HMAC signature**, **paper-fill**, and **account-snapshot asset mapping** logic, the full trading cycle, and the report renderers.
@@ -161,7 +186,7 @@ Coverage spans the simulator, signed portfolio accounting, **live wallet reconci
 bellwether/
 ├── config.py          configuration + secret handling (env, never YAML)
 ├── models.py          Instrument, Quote, Position (fractional), Order, Fill, Signal, TradeIdea
-├── storage.py         SQLite persistence (positions, fills, prices, equity)
+├── storage.py         SQLite persistence (positions, fills, prices, equity, predictions, reflections)
 ├── news.py            free crypto-news RSS feed (grounds the AI signal)
 ├── portfolio.py       cash, positions, realized/unrealized P&L + live reconciliation
 ├── risk.py            conviction sizing, exposure caps, stop-loss, kill switch
@@ -174,10 +199,17 @@ bellwether/
 │   ├── paper.py       offline crypto-market simulator (the default)
 │   └── kraken.py      live Kraken client (public quotes + signed private orders)
 ├── executor.py        sends orders, books fills
-├── trader.py          the cycle and the always-on loop
-├── report.py          daily digest (terminal / HTML / SMS)
+├── trader.py          the cycle and the always-on loop (+ journals predictions)
+├── learning/
+│   ├── journal.py     prediction journal — log every signal, score vs reality
+│   ├── reliability.py bounded trust weights per (strategy × coin)
+│   ├── memory.py      the bot's trading journal — model writes its own lessons
+│   ├── discovery.py   universe discovery (probation → graduate / retire)
+│   ├── autotune.py    bounded selection tuning; capital limits are immutable
+│   └── reflect.py     the daily reflection orchestrator
+├── report.py          daily digest (terminal / HTML / SMS) + what was learned
 ├── notify/            console · email · sms channels
-└── cli.py             run · once · report · status · markets
+└── cli.py             run · once · reflect · report · status · markets
 ```
 
 ## Disclaimer

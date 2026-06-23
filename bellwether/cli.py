@@ -1,7 +1,8 @@
 """Command-line interface.
 
-    bellwether run      # start the always-on trading loop
+    bellwether run      # start the always-on trading loop (+ daily reflection)
     bellwether once     # run a single cycle and print what happened
+    bellwether reflect  # run the learning loop now: score, adapt, discover
     bellwether report   # build and (optionally) send today's digest
     bellwether status   # show current portfolio
     bellwether markets  # list the universe with quotes and signals
@@ -21,7 +22,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .config import load_config
-from .factory import build_engine, build_notifier, build_trader
+from .factory import build_engine, build_notifier, build_reflector, build_trader
 from .report import build_report, render_text
 
 console = Console()
@@ -60,11 +61,13 @@ def cmd_run(args) -> int:
     cfg = load_config(args.config)
     trader, venue, portfolio, storage = build_trader(cfg, allow_live=args.live)
     notifier = build_notifier(cfg)
+    reflector = build_reflector(cfg, storage, venue) if cfg.learning.enabled else None
     _banner(cfg, args.live)
     console.print(
         f"[green]Running[/] every {cfg.poll_interval_sec}s. "
         f"Daily report at {cfg.daily_report_hour}:00 via {cfg.notify.channel}. "
-        "Ctrl-C to stop."
+        + ("Learning loop ON. " if reflector else "")
+        + "Ctrl-C to stop."
     )
 
     def on_cycle(report):
@@ -77,6 +80,19 @@ def cmd_run(args) -> int:
         )
 
     def on_daily_report():
+        # Reflect first (score predictions, update trust, tune within bounds,
+        # discover coins) so today's changes show up in the digest.
+        if reflector is not None:
+            try:
+                summary = reflector.run()
+                console.print(
+                    f"[magenta]Reflection:[/] scored {summary.scored}, "
+                    f"{len(summary.changes)} self-adjustments"
+                    + (f", +{len(summary.discovery.added)} on probation" if summary.discovery and summary.discovery.added else "")
+                    + "."
+                )
+            except Exception as exc:
+                console.print(f"[red]Reflection failed:[/] {exc}")
         _instruments, quotes = _snapshot(venue, cfg)
         data = build_report(portfolio, storage, quotes, cfg.risk.starting_bankroll, cfg.mode)
         try:
@@ -104,6 +120,47 @@ def cmd_report(args) -> int:
         console.print(f"[green]Report sent via {cfg.notify.channel}.[/]")
     else:
         console.print(render_text(data))
+    storage.close()
+    return 0
+
+
+def cmd_reflect(args) -> int:
+    cfg = load_config(args.config)
+    trader, venue, portfolio, storage = build_trader(cfg, allow_live=args.live)
+    if not cfg.learning.enabled:
+        console.print("[yellow]Learning is disabled (learning.enabled: false).[/]")
+        storage.close()
+        return 0
+    reflector = build_reflector(cfg, storage, venue)
+    summary = reflector.run()
+    console.print(
+        f"[bold]Reflection — {summary.day}[/]\n"
+        f"  Scored this run: {summary.scored}\n"
+        f"  Track record: {summary.overall_hit_rate:.0%} hit rate over "
+        f"{summary.overall_samples} scored predictions"
+    )
+    for source, (n, hr, calib) in summary.by_source.items():
+        tag = "overconfident" if calib > 0.05 else ("underconfident" if calib < -0.05 else "calibrated")
+        console.print(f"    {source}: {hr:.0%} ({n} preds) — {tag}")
+    if summary.changes:
+        console.print("  [cyan]Self-adjustments (within hard bounds):[/]")
+        for c in summary.changes:
+            console.print(f"    {c.field}: {c.old_value:.2f} → {c.new_value:.2f} — {c.reason}")
+    else:
+        console.print("  Self-adjustments: none.")
+    if summary.discovery and summary.discovery.changed:
+        ds = summary.discovery
+        if ds.added:
+            console.print(f"  [green]New on probation:[/] {', '.join(ds.added)}")
+        if ds.graduated:
+            console.print(f"  [green]Graduated to active:[/] {', '.join(ds.graduated)}")
+        if ds.retired:
+            console.print(f"  [yellow]Retired:[/] {', '.join(ds.retired)}")
+    if summary.lessons:
+        console.print("  [bold]Journal lessons:[/]")
+        for line in summary.lessons.splitlines():
+            if line.strip():
+                console.print(f"    {line.strip()}")
     storage.close()
     return 0
 
@@ -176,6 +233,7 @@ def main(argv=None) -> int:
         ("once", cmd_once),
         ("status", cmd_status),
         ("markets", cmd_markets),
+        ("reflect", cmd_reflect),
     ]:
         p = sub.add_parser(name)
         p.set_defaults(func=fn)

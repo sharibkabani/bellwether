@@ -55,6 +55,49 @@ class LLMConfig:
 
 
 @dataclass
+class LearningConfig:
+    """The self-learning loop. Capital-protection limits in RiskConfig
+    (max_position_per_trade, max_daily_spend, max_drawdown_pct, stop_loss_pct)
+    are human-owned and NEVER touched by the bot. Everything here governs how
+    the bot adapts *selection* — who it trusts and what it watches — within
+    hard bounds it cannot exceed."""
+
+    enabled: bool = True
+    # Prediction journal / scoring
+    prediction_horizon_hours: float = 24.0     # when a logged prediction gets scored
+    min_samples_to_adapt: int = 20             # require N scored samples before adapting
+    move_threshold: float = 0.01               # |move| under 1% counts as "flat" (not a hit)
+
+    # Reliability weights (bounded trust multiplier per strategy x coin)
+    reliability_min: float = 0.5
+    reliability_max: float = 1.5
+    reliability_prior_strength: float = 10.0   # regularize toward 1.0 (slow learning)
+
+    # Bounded config auto-tuning (selection aggressiveness only)
+    autotune_enabled: bool = True
+    min_confidence_floor: float = 0.50         # bot may not drop below this
+    min_confidence_ceiling: float = 0.70       # bot may not rise above this
+    min_confidence_step: float = 0.02          # max nudge per reflection
+    weight_min: float = 0.5                    # strategy-weight floor
+    weight_max: float = 3.0                    # strategy-weight ceiling
+    weight_step: float = 0.25                  # max weight nudge per reflection
+
+    # Universe discovery
+    discovery_enabled: bool = True
+    discovery_min_volume_usd: float = 5_000_000.0   # liquidity floor for new coins
+    discovery_max_new_per_day: int = 3
+    probation_days: float = 7.0                # watch a new coin this long before graduating
+    probation_min_samples: int = 8            # and require this many scored predictions
+    probation_size_pct: float = 0.25          # probation coins trade at 25% of normal size
+    retire_min_samples: int = 12              # only retire after enough evidence
+    retire_max_hit_rate: float = 0.40         # retire a coin whose hit rate stays this low
+
+    # Reflection memory
+    memory_file: str = "memory/lessons.md"
+    reflect_use_llm: bool = True               # have the model write its own journal
+
+
+@dataclass
 class NewsConfig:
     enabled: bool = True
     feeds: list[str] = field(default_factory=list)  # empty = built-in crypto RSS feeds
@@ -88,6 +131,7 @@ class Config:
     risk: RiskConfig = field(default_factory=RiskConfig)
     strategy: StrategyConfig = field(default_factory=StrategyConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
+    learning: LearningConfig = field(default_factory=LearningConfig)
     news: NewsConfig = field(default_factory=NewsConfig)
     kraken: KrakenConfig = field(default_factory=KrakenConfig)
     notify: NotifyConfig = field(default_factory=NotifyConfig)
@@ -146,6 +190,8 @@ def load_config(path: str | None = None) -> Config:
         cfg.strategy = _build(StrategyConfig, data["strategy"])
     if "llm" in data:
         cfg.llm = _build(LLMConfig, data["llm"])
+    if "learning" in data:
+        cfg.learning = _build(LearningConfig, data["learning"])
     if "news" in data:
         cfg.news = _build(NewsConfig, data["news"])
     if "kraken" in data:

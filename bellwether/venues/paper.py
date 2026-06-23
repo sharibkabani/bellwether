@@ -83,6 +83,29 @@ class PaperVenue:
     def quotes(self, instruments: list[Instrument]) -> dict[str, Quote]:
         return {i.symbol: self._quote(i.symbol) for i in instruments if i.symbol in self._prices}
 
+    def discover_candidates(self, min_volume_usd: float = 0.0) -> list[dict]:
+        """Expose the full simulated market as discovery candidates. Lets the
+        learning loop "find" coins (e.g. MATIC, DOT) that aren't in the default
+        config universe — so discovery is exercisable fully offline."""
+        out = []
+        for symbol, name, category, _ in _UNIVERSE:
+            q = self._quote(symbol)
+            volume_usd = q.volume * q.last
+            if volume_usd < min_volume_usd:
+                continue
+            change = (q.last / q.prev_close - 1.0) if q.prev_close else 0.0
+            out.append(
+                {
+                    "symbol": symbol,
+                    "pair": f"{symbol}USD",
+                    "name": name,
+                    "volume_usd": volume_usd,
+                    "change_24h": change,
+                    "last": q.last,
+                }
+            )
+        return out
+
     def place_order(self, order: Order) -> Fill | None:
         if order.symbol not in self._prices:
             return None

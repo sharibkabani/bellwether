@@ -20,9 +20,12 @@ _SLIPPAGE = 0.002  # 20 bps limit allowance so aggressive orders fill
 
 
 class RiskManager:
-    def __init__(self, cfg: RiskConfig, storage: Storage):
+    def __init__(self, cfg: RiskConfig, storage: Storage, probation_size_pct: float = 1.0):
         self._cfg = cfg
         self._storage = storage
+        # Coins the learning loop is still vetting trade at a fraction of normal
+        # size until they graduate. 1.0 disables the effect.
+        self._probation_size_pct = probation_size_pct
 
     # --- daily spend tracking --------------------------------------------
 
@@ -60,6 +63,9 @@ class RiskManager:
         exposure = portfolio.exposure()
         daily_budget = self.remaining_daily_spend()
         cash = portfolio.cash
+        probation = (
+            self._storage.probation_symbols() if self._probation_size_pct < 1.0 else set()
+        )
 
         for idea in ideas:
             if open_count >= self._cfg.max_open_positions:
@@ -79,6 +85,8 @@ class RiskManager:
 
             # Conviction sizing: a base fraction of equity, scaled by confidence.
             notional = equity * self._cfg.position_pct * idea.confidence
+            if idea.instrument.symbol in probation:
+                notional *= self._probation_size_pct  # tiny size while vetting
             notional = min(
                 notional,
                 self._cfg.max_position_per_trade,

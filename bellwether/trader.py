@@ -54,6 +54,16 @@ class Trader:
         self._engine = engine
         self._storage = storage
         self._executor = Executor(venue, portfolio, risk)
+        # The prediction journal: log every signal so it can be scored later.
+        self._journal = None
+        if cfg.learning.enabled:
+            from .learning.journal import PredictionJournal
+
+            self._journal = PredictionJournal(
+                storage,
+                horizon_hours=cfg.learning.prediction_horizon_hours,
+                move_threshold=cfg.learning.move_threshold,
+            )
 
     def _market_snapshot(self) -> tuple[list, dict[str, Quote]]:
         instruments = self._venue.list_instruments(self._cfg.strategy.categories or None)
@@ -81,6 +91,12 @@ class Trader:
 
         # 2. Generate and rank directional trade ideas.
         ideas = self._engine.generate(instruments, quotes)
+
+        # 2b. Journal every raw signal (with the price now) so the learning loop
+        # can score these predictions against reality once their horizon elapses.
+        if self._journal is not None and self._engine.last_signals:
+            prices = {sym: q.last for sym, q in quotes.items()}
+            self._journal.record(self._engine.last_signals, prices)
 
         # 3. Risk-check, size, and execute new entries (unless withheld).
         if entries_skipped:
