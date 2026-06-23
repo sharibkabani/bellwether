@@ -118,16 +118,22 @@ no inbound ports, no secrets on GitHub — matching the outbound-only posture.
 > and the repo to be reachable (public, or with credentials configured for the
 > `ubuntu` user). With no upstream branch the updater just no-ops.
 
-One-time install on the VM (after the bot service from Section 4 is running):
+One-time install on the VM (after the bot service from Section 4 is running) —
+one command does it all (installs the timer + the `bw` helper, applies the code):
 ```bash
-cd ~/bellwether && git pull          # get these deploy files onto the box once
+cd ~/bellwether && git pull && bash deploy/bootstrap.sh
+```
+
+<details><summary>…or the same steps by hand</summary>
+
+```bash
 sudo cp deploy/bellwether-update.service deploy/bellwether-update.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now bellwether-update.timer
-
-# Install the `bw` helper on your PATH (remove any old `alias bw=` first):
-sudo ln -sf ~/bellwether/deploy/bw /usr/local/bin/bw
+sudo ln -sf ~/bellwether/deploy/bw /usr/local/bin/bw   # remove any old `alias bw=` first
+sudo systemctl restart bellwether
 ```
+</details>
 
 After this, the workflow is just: **push on your Mac → wait ≤2 min → it deploys.**
 Watch it happen live:
