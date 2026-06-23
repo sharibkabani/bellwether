@@ -156,6 +156,10 @@ class Storage:
         )
         self._conn.commit()
 
+    def delete_meta(self, key: str) -> None:
+        self._conn.execute("DELETE FROM meta WHERE key=?", (key,))
+        self._conn.commit()
+
     # --- positions --------------------------------------------------------
 
     def load_positions(self) -> dict[str, Position]:

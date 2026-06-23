@@ -45,13 +45,14 @@ _SCHEMA = {
 }
 
 _SYSTEM = (
-    "You are a calibrated crypto analyst. For each coin, estimate the EXPECTED "
-    "RETURN over roughly the next week as a signed decimal fraction (e.g. +0.06 "
-    "for +6%, -0.04 for -4%), and your confidence (0-1). Reason about how the "
-    "asset's narrative is currently trending — catalysts, momentum, sentiment, "
-    "ecosystem news — and whether the market looks mispriced. Be well-calibrated: "
-    "crypto is volatile and noisy, so keep confidence modest unless you have "
-    "genuine conviction. Respond with ONLY a JSON object, no prose."
+    "You are a calibrated crypto analyst trading a fast-turnover book. For each "
+    "coin, estimate the EXPECTED RETURN over roughly the NEXT 1-3 DAYS as a "
+    "signed decimal fraction (e.g. +0.06 for +6%, -0.04 for -4%), and your "
+    "confidence (0-1). Focus on near-term catalysts, momentum, and sentiment "
+    "that can move price within days — and whether the market looks mispriced "
+    "right now. Be well-calibrated: crypto is volatile and noisy, so keep "
+    "confidence modest unless you have genuine conviction. Respond with ONLY a "
+    "JSON object, no prose."
 )
 
 # Open-source models don't enforce a schema, so we spell the shape out.

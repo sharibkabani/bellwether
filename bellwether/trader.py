@@ -70,7 +70,11 @@ class Trader:
         quotes = self._venue.quotes(instruments)
         return instruments, quotes
 
-    def run_cycle(self) -> CycleReport:
+    def run_cycle(self, run_entries: bool = True) -> CycleReport:
+        """Run one cycle. Exits/trailing are always checked; new-entry hunting
+        (and the LLM call + prediction journaling) only happens when
+        ``run_entries`` is true, so the loop can manage open risk frequently
+        while sourcing new ideas on a slower, cheaper cadence."""
         instruments, quotes = self._market_snapshot()
 
         # 0. Live only: reconcile against the real wallet so sizing/risk use the
@@ -89,21 +93,22 @@ class Trader:
         exit_orders = self._risk.check_exits(self._portfolio, quotes)
         exit_result = self._executor.execute(exit_orders)
 
-        # 2. Generate and rank directional trade ideas.
-        ideas = self._engine.generate(instruments, quotes)
+        from .executor import ExecutionResult
 
-        # 2b. Journal every raw signal (with the price now) so the learning loop
-        # can score these predictions against reality once their horizon elapses.
-        if self._journal is not None and self._engine.last_signals:
-            prices = {sym: q.last for sym, q in quotes.items()}
-            self._journal.record(self._engine.last_signals, prices)
-
-        # 3. Risk-check, size, and execute new entries (unless withheld).
-        if entries_skipped:
-            from .executor import ExecutionResult
-
+        ideas: list[TradeIdea] = []
+        if not run_entries or entries_skipped:
             entry_result = ExecutionResult()
         else:
+            # 2. Generate and rank directional trade ideas.
+            ideas = self._engine.generate(instruments, quotes)
+
+            # 2b. Journal every raw signal (with the price now) so the learning
+            # loop can score these predictions against reality at the horizon.
+            if self._journal is not None and self._engine.last_signals:
+                prices = {sym: q.last for sym, q in quotes.items()}
+                self._journal.record(self._engine.last_signals, prices)
+
+            # 3. Risk-check, size, and execute new entries.
             entry_orders = self._risk.approve_entries(ideas, self._portfolio, quotes)
             entry_result = self._executor.execute(entry_orders, record_spend=True)
 
@@ -128,8 +133,14 @@ class Trader:
 
     def run_forever(self, on_cycle=None, on_daily_report=None) -> None:
         last_report_day = self._storage.get_meta("last_report_day", "")
+        last_entry_ts = 0.0
+        entry_interval = max(self._cfg.entry_interval_sec, self._cfg.poll_interval_sec)
         while True:
-            report = self.run_cycle()
+            now_ts = time.time()
+            run_entries = (now_ts - last_entry_ts) >= entry_interval
+            report = self.run_cycle(run_entries=run_entries)
+            if run_entries:
+                last_entry_ts = now_ts
             if on_cycle:
                 on_cycle(report)
 

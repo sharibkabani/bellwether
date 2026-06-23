@@ -62,11 +62,11 @@ A complete autonomous agent loop around a real exchange, built cleanly:
                   └──────────────────┘      └─────────────────────┘
 ```
 
-**One cycle:** refresh coins + quotes → close any position that hit stop-loss / take-profit → ask the strategies for expected returns → blend into ranked trade ideas → risk-check and size the entries (in fractional coin amounts) → execute → snapshot equity. The loop repeats on the poll interval and fires the daily report once a day.
+**One cycle:** refresh coins + quotes → manage open positions (stop-loss, **partial take-profit**, **trailing stop**, take-profit) → ask the strategies for expected returns → blend into ranked trade ideas → risk-check and size the entries (in fractional coin amounts) → execute → snapshot equity. **Exits/trailing are checked every cycle** (`poll_interval_sec`, default 5 min) so intraday spikes get banked, while **new-entry hunting + the LLM call run on a slower cadence** (`entry_interval_sec`, default 15 min) to stay cheap. The daily report fires once a day.
 
 ### The AI signal (free, pluggable)
 
-For each coin, the model acts as a calibrated analyst and returns the **expected return over ~1 week** (a signed fraction) plus its confidence, reasoning about catalysts, momentum, and sentiment. It's **grounded in live news**: each cycle the bot pulls recent headlines from free crypto RSS feeds (CoinDesk, Cointelegraph, Decrypt — no key) and injects the ones relevant to each coin into the prompt, so "trending" reflects *today's* events rather than the model's training cutoff. Output is parsed defensively (tolerates markdown fences and stray prose).
+For each coin, the model acts as a calibrated analyst and returns the **expected return over the next 1–3 days** (a signed fraction) plus its confidence, reasoning about near-term catalysts, momentum, and sentiment. It's **grounded in live news**: each cycle the bot pulls recent headlines from free crypto RSS feeds (CoinDesk, Cointelegraph, Decrypt — no key) and injects the ones relevant to each coin into the prompt, so "trending" reflects *today's* events rather than the model's training cutoff. Output is parsed defensively (tolerates markdown fences and stray prose).
 
 The provider is one config line:
 
@@ -86,7 +86,9 @@ The provider is one config line:
 | Conviction sizing | Position $ = (equity × `position_pct`) scaled by signal confidence |
 | Per-trade / gross-exposure caps | Hard ceilings on one coin and on total deployed capital |
 | Daily-spend cap | Limits new capital deployed per day |
-| Stop-loss / take-profit | Auto-closes positions past −10% / +20% (configurable; crypto-tuned) |
+| Stop-loss | Cuts a loser at −7% from cost (configurable) |
+| Partial take-profit + trailing stop | Banks part of the position at +5%, then trails the remainder 4% below its peak — captures quick gains while letting winners run |
+| Take-profit ceiling | Fully exits a big winner at +25% |
 | Drawdown kill switch | Halts all new entries if equity falls 25% from its peak |
 | Long-only | Kraken spot is long-only — no leverage, no shorting |
 | One position per coin | No stacking or over-concentration |

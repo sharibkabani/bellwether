@@ -25,12 +25,17 @@ class RiskConfig:
     max_daily_spend: float = 2000.0            # max $ of new entries per day
     max_open_positions: int = 6
     position_pct: float = 0.15                 # base fraction of equity per trade
-    min_expected_return: float = 0.04          # require a 4%+ expected move to enter
+    min_expected_return: float = 0.03          # require a 3%+ expected move to enter (must clear ~0.5% fees)
     min_confidence: float = 0.55               # require 55%+ signal confidence
-    stop_loss_pct: float = 0.10                # close a position down 10% (crypto is volatile)
-    take_profit_pct: float = 0.20              # close a position up 20%
+    stop_loss_pct: float = 0.07                # cut a loser at -7% (crypto is volatile)
+    take_profit_pct: float = 0.25              # hard ceiling: fully exit at +25% (let runners run; trailing usually fires first)
     max_drawdown_pct: float = 0.25             # kill switch: halt if equity down 25%
     allow_short: bool = False                  # Kraken spot is long-only; keep False
+    # --- faster turnover: bank gains, keep runners (long positions only) ---
+    partial_take_profit_pct: float = 0.05      # at +5%, sell part of the position (quick money)
+    partial_take_fraction: float = 0.5         # ...this fraction of it; the rest rides
+    trailing_stop_pct: float = 0.04            # then trail the remainder: exit if it falls 4% from its peak
+    trail_activate_pct: float = 0.05           # only start trailing once a position has been up this much
 
 
 @dataclass
@@ -126,7 +131,8 @@ class NotifyConfig:
 class Config:
     mode: str = "sim"                          # sim (offline simulator) | kraken (real prices)
     data_dir: str = "./bellwether-data"
-    poll_interval_sec: int = 900               # 15 min between trading cycles
+    poll_interval_sec: int = 900               # seconds between cycles (exits/trailing checked every cycle)
+    entry_interval_sec: int = 900              # how often to hunt NEW entries (LLM + journal); >= poll_interval
     daily_report_hour: int = 17
     risk: RiskConfig = field(default_factory=RiskConfig)
     strategy: StrategyConfig = field(default_factory=StrategyConfig)

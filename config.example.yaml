@@ -3,7 +3,8 @@
 
 mode: sim                   # sim (offline simulator) | kraken (real Kraken prices)
 data_dir: ./bellwether-data
-poll_interval_sec: 900      # seconds between trading cycles (900 = 15 min)
+poll_interval_sec: 300      # seconds between cycles; exits/trailing are checked EVERY cycle (300 = 5 min)
+entry_interval_sec: 900     # how often to hunt NEW entries (LLM + journal); keep >= poll_interval (15 min)
 daily_report_hour: 17       # local hour (0-23) to send the daily digest
 
 risk:
@@ -13,12 +14,17 @@ risk:
   max_daily_spend: 2000.0           # max $ of new entries per day
   max_open_positions: 6
   position_pct: 0.15                # base fraction of equity per trade (scaled by confidence)
-  min_expected_return: 0.04         # require a 4%+ expected move to enter
+  min_expected_return: 0.03         # require a 3%+ expected move to enter (must clear ~0.5% round-trip fees)
   min_confidence: 0.55              # require 55%+ signal confidence
-  stop_loss_pct: 0.10               # close a position down 10% (crypto is volatile)
-  take_profit_pct: 0.20             # close a position up 20%
+  stop_loss_pct: 0.07               # cut a loser at -7%
+  take_profit_pct: 0.25             # hard ceiling: fully exit a big winner at +25%
   max_drawdown_pct: 0.25            # kill switch: halt if equity falls 25% from peak
   allow_short: false                # Kraken spot is long-only
+  # Faster turnover — bank quick gains, let some winners run (long positions):
+  partial_take_profit_pct: 0.05     # at +5%, sell part of the position (quick money)
+  partial_take_fraction: 0.5        # ...this fraction; the remainder rides
+  trailing_stop_pct: 0.04           # then trail the rest: exit if it drops 4% from its peak
+  trail_activate_pct: 0.05          # only start trailing once a position has been up 5%
 
 strategy:
   use_momentum: true

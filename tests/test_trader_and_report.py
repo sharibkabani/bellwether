@@ -25,6 +25,19 @@ def test_full_cycle_runs_in_sim_mode():
     storage.close()
 
 
+def test_entry_cadence_gating_skips_new_entries():
+    cfg = _sim_config()
+    trader, venue, portfolio, storage = build_trader(cfg)
+    # Build enough price history that entries WOULD fire if allowed.
+    for _ in range(6):
+        trader.run_cycle(run_entries=True)
+    # An exit-only cycle must not generate ideas or new entries.
+    report = trader.run_cycle(run_entries=False)
+    assert report.entries == []
+    assert report.top_ideas == []
+    storage.close()
+
+
 def test_report_renders_all_formats():
     cfg = _sim_config()
     trader, venue, portfolio, storage = build_trader(cfg)
