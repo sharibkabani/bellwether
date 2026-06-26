@@ -20,15 +20,12 @@ def _build_client(cfg: Config):
     if not cfg.llm.enabled:
         return None
     try:
-        from ..signals.llm import build_client
+        # Reuse the same provider fallback chain as the signals (Groq → Cerebras
+        # → OpenRouter), so a single provider's rate-limit doesn't drop the post
+        # back to the bare stats template.
+        from ..factory import _build_llm_client
 
-        return build_client(
-            provider=cfg.llm.provider,
-            model=cfg.llm.model,
-            base_url=cfg.llm.base_url,
-            api_key=cfg.llm_api_key(),
-            max_tokens=cfg.llm.max_tokens,
-        )
+        return _build_llm_client(cfg)
     except Exception:
         return None
 
