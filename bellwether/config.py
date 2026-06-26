@@ -112,6 +112,20 @@ class NewsConfig:
 
 
 @dataclass
+class BlogConfig:
+    """Publish a daily public blog of the bot's findings + learnings to GitHub
+    Pages. Off by default until a repo is configured."""
+
+    enabled: bool = False
+    title: str = "Bellwether — an autonomous AI crypto trading journal"
+    repo_url: str = ""            # e.g. https://github.com/<you>/<repo>.git (NO token here)
+    branch: str = "main"
+    subdir: str = ""              # "" = repo root, or "docs" (match your Pages source)
+    base_url: str = ""            # e.g. https://<you>.github.io/<repo> (for links/meta)
+    include_dollars: bool = False  # publish % returns + narrative only; never $ balances
+
+
+@dataclass
 class KrakenConfig:
     api_base: str = "https://api.kraken.com"
 
@@ -140,6 +154,7 @@ class Config:
     learning: LearningConfig = field(default_factory=LearningConfig)
     news: NewsConfig = field(default_factory=NewsConfig)
     kraken: KrakenConfig = field(default_factory=KrakenConfig)
+    blog: BlogConfig = field(default_factory=BlogConfig)
     notify: NotifyConfig = field(default_factory=NotifyConfig)
 
     # --- secrets / env ---
@@ -174,6 +189,11 @@ class Config:
         return os.environ.get("TWILIO_AUTH_TOKEN", "")
 
     @property
+    def github_token(self) -> str:
+        """Token used to push the blog to GitHub Pages (write access to the repo)."""
+        return os.environ.get("GITHUB_TOKEN", "") or os.environ.get("BLOG_GITHUB_TOKEN", "")
+
+    @property
     def is_live(self) -> bool:
         return self.mode == "kraken"
 
@@ -202,6 +222,8 @@ def load_config(path: str | None = None) -> Config:
         cfg.news = _build(NewsConfig, data["news"])
     if "kraken" in data:
         cfg.kraken = _build(KrakenConfig, data["kraken"])
+    if "blog" in data:
+        cfg.blog = _build(BlogConfig, data["blog"])
     if "notify" in data:
         cfg.notify = _build(NotifyConfig, data["notify"])
     return cfg

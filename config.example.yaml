@@ -101,6 +101,16 @@ news:
 kraken:
   api_base: https://api.kraken.com
 
+blog:
+  enabled: false                    # publish a daily public blog of findings + learnings
+  title: "Bellwether — an autonomous AI crypto trading journal"
+  repo_url: ""                      # https://github.com/<you>/<repo>.git (GitHub Pages repo)
+  branch: main                      # branch GitHub Pages serves from
+  subdir: ""                        # "" = repo root; or "docs" (match your Pages source)
+  base_url: ""                      # https://<you>.github.io/<repo>  (for links shown in logs)
+  include_dollars: false            # publish % returns + narrative only; never $ balances
+  # The push token comes from the env: set GITHUB_TOKEN (fine-grained PAT, Contents: write).
+
 notify:
   channel: console                  # console | email | sms
   email_to: ksharib05@gmail.com

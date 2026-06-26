@@ -100,6 +100,13 @@ def cmd_run(args) -> int:
             console.print(f"[green]Daily report sent via {cfg.notify.channel}.[/]")
         except Exception as exc:
             console.print(f"[red]Report send failed:[/] {exc}")
+        # Publish the public daily blog (fail-soft; never breaks the loop).
+        if cfg.blog.enabled:
+            from .blog import publish_blog
+
+            msg = publish_blog(cfg, data)
+            if msg:
+                console.print(f"[blue]{msg}[/]")
 
     try:
         trader.run_forever(on_cycle=on_cycle, on_daily_report=on_daily_report)
@@ -161,6 +168,22 @@ def cmd_reflect(args) -> int:
         for line in summary.lessons.splitlines():
             if line.strip():
                 console.print(f"    {line.strip()}")
+    storage.close()
+    return 0
+
+
+def cmd_blog(args) -> int:
+    cfg = load_config(args.config)
+    if not cfg.blog.enabled:
+        console.print("[yellow]Blog is disabled (set blog.enabled: true in config).[/]")
+        return 0
+    trader, venue, portfolio, storage = build_trader(cfg, allow_live=args.live)
+    _instruments, quotes = _snapshot(venue, cfg)
+    data = build_report(portfolio, storage, quotes, cfg.risk.starting_bankroll, cfg.mode)
+    from .blog import publish_blog
+
+    msg = publish_blog(cfg, data, push=not args.preview)
+    console.print(f"[blue]{msg}[/]" if msg else "[yellow]Blog disabled.[/]")
     storage.close()
     return 0
 
@@ -240,6 +263,9 @@ def main(argv=None) -> int:
     rep = sub.add_parser("report")
     rep.add_argument("--send", action="store_true", help="send via the notifier")
     rep.set_defaults(func=cmd_report)
+    blg = sub.add_parser("blog")
+    blg.add_argument("--preview", action="store_true", help="build the site locally without pushing")
+    blg.set_defaults(func=cmd_blog)
 
     args = parser.parse_args(argv)
     try:

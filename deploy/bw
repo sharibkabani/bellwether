@@ -6,6 +6,7 @@
 #
 #   bw watch     tail the bot + auto-updater logs together (see deploys land live)
 #   bw update    check GitHub for a new commit and deploy it right now
+#   bw blog [--preview]   generate + publish today's blog post now
 #   bw run|once|reflect|report|status|markets [...]   → bellwether CLI
 set -euo pipefail
 
@@ -22,7 +23,7 @@ case "${1:-}" in
     exec sudo systemctl start bellwether-update.service
     ;;
   ""|-h|--help)
-    echo "usage: bw <watch|update|run|once|reflect|report|status|markets> [args]"
+    echo "usage: bw <watch|update|run|once|reflect|report|status|markets|blog> [args]"
     [ -z "${1:-}" ] && exit 1 || exit 0
     ;;
   *)

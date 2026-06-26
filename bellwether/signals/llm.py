@@ -62,6 +62,10 @@ class LLMClient(ABC):
     def complete_json(self, system: str, user: str, schema: dict | None = None) -> str:
         """Return the model's response as a JSON string."""
 
+    @abstractmethod
+    def complete_text(self, system: str, user: str) -> str:
+        """Return the model's response as free-form text (e.g. a blog post)."""
+
 
 class OpenAICompatibleClient(LLMClient):
     """Works against any OpenAI-compatible chat endpoint (Ollama, Groq,
@@ -106,6 +110,24 @@ class OpenAICompatibleClient(LLMClient):
         content = data["choices"][0]["message"]["content"]
         return extract_json(content)
 
+    def complete_text(self, system: str, user: str) -> str:
+        headers = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        body = {
+            "model": self._model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "max_tokens": self._max_tokens,
+            "temperature": 0.6,  # a touch of voice for prose
+            "stream": False,
+        }
+        resp = requests.post(self._url, headers=headers, json=body, timeout=self._timeout)
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+
 
 class AnthropicClient(LLMClient):
     """Optional Claude provider via the anthropic SDK (uses strict JSON schema
@@ -132,6 +154,18 @@ class AnthropicClient(LLMClient):
         for block in response.content:
             if block.type == "text" and block.text.strip():
                 return extract_json(block.text)
+        raise RuntimeError("no text block in response")
+
+    def complete_text(self, system: str, user: str) -> str:
+        response = self._client.messages.create(
+            model=self._model,
+            max_tokens=self._max_tokens,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+        )
+        for block in response.content:
+            if block.type == "text" and block.text.strip():
+                return block.text
         raise RuntimeError("no text block in response")
 
 
