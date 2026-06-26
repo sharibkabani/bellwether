@@ -113,9 +113,9 @@ blog:
 
 notify:
   channel: console                  # console | email | sms
-  email_to: ksharib05@gmail.com
-  email_from: ksharib05@gmail.com
+  email_to: you@example.com
+  email_from: you@example.com
   smtp_host: smtp.gmail.com
   smtp_port: 587
-  sms_to: "+16477666778"
+  sms_to: ""                        # your phone, e.g. "+15551234567"
   sms_from: ""                      # your Twilio number
