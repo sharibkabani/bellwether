@@ -70,18 +70,38 @@ def _universe(cfg: Config, storage: "Storage | None" = None) -> list[Instrument]
 
 
 def _build_llm_client(cfg: Config):
-    """The shared LLM client for signals, reflection, and discovery (or None)."""
+    """The shared LLM client for signals, reflection, and discovery (or None).
+
+    If ``llm.providers`` lists a fallback chain, build each available provider
+    (skipping any without a key) and wrap them so rate-limits fail over to the
+    next "best free model" instead of killing the AI signal.
+    """
     if not cfg.llm.enabled:
         return None
-    from .signals.llm import build_client
+    from .signals.llm import FallbackChainClient, build_client
 
-    return build_client(
-        provider=cfg.llm.provider,
-        model=cfg.llm.model,
-        base_url=cfg.llm.base_url,
-        api_key=cfg.llm_api_key(),
-        max_tokens=cfg.llm.max_tokens,
-    )
+    # Ordered chain: explicit `providers` list, else just the primary provider.
+    chain = cfg.llm.providers or [cfg.llm.provider]
+    clients = []
+    for prov in chain:
+        # The model/base_url overrides only apply to the primary provider;
+        # chained providers use their own best free default.
+        is_primary = prov == cfg.llm.provider
+        client = build_client(
+            provider=prov,
+            model=cfg.llm.model if is_primary else "",
+            base_url=cfg.llm.base_url if is_primary else "",
+            api_key=cfg.llm_api_key_for(prov),
+            max_tokens=cfg.llm.max_tokens,
+        )
+        if client is not None:
+            clients.append(client)
+
+    if not clients:
+        return None
+    if len(clients) == 1:
+        return clients[0]
+    return FallbackChainClient(clients, cooldown_sec=cfg.llm.cooldown_sec)
 
 
 def build_venue(cfg: Config, allow_live: bool = False, storage: "Storage | None" = None) -> Venue:

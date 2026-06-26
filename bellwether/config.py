@@ -53,10 +53,16 @@ class StrategyConfig:
 @dataclass
 class LLMConfig:
     enabled: bool = True
-    provider: str = "groq"        # groq | ollama | openrouter | openai | anthropic
-    model: str = ""               # blank = the provider's default model
+    provider: str = "groq"        # groq | cerebras | openrouter | gemini | ollama | openai | anthropic
+    # Optional ordered fallback chain ("best free model first"). When non-empty,
+    # the bot tries each provider in turn and fails over on rate-limits/errors,
+    # so a single provider's daily cap can't silently kill the AI signal.
+    # e.g. [groq, cerebras, openrouter]. Providers without a key are skipped.
+    providers: list[str] = field(default_factory=list)
+    model: str = ""               # blank = the provider's default model (chain uses each provider's default)
     base_url: str = ""            # blank = the provider's default endpoint
     max_tokens: int = 2000
+    cooldown_sec: int = 300       # how long to skip a rate-limited provider before retrying it
 
 
 @dataclass
@@ -158,15 +164,21 @@ class Config:
     notify: NotifyConfig = field(default_factory=NotifyConfig)
 
     # --- secrets / env ---
-    def llm_api_key(self) -> str:
-        """API key for the configured LLM provider (empty for Ollama/local)."""
+    def llm_api_key_for(self, provider: str) -> str:
+        """API key for a given LLM provider (empty for Ollama/local)."""
         env_var = {
             "groq": "GROQ_API_KEY",
+            "cerebras": "CEREBRAS_API_KEY",
             "openrouter": "OPENROUTER_API_KEY",
+            "gemini": "GEMINI_API_KEY",
             "openai": "OPENAI_API_KEY",
             "anthropic": "ANTHROPIC_API_KEY",
-        }.get(self.llm.provider, "")
+        }.get(provider, "")
         return os.environ.get(env_var, "") if env_var else ""
+
+    def llm_api_key(self) -> str:
+        """API key for the primary configured LLM provider."""
+        return self.llm_api_key_for(self.llm.provider)
 
     @property
     def kraken_api_key(self) -> str:

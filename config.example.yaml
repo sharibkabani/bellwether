@@ -47,15 +47,21 @@ strategy:
 
 llm:
   enabled: true
-  provider: groq                    # groq (best free) | ollama (free, local, no key) | openrouter | openai | anthropic
-  model: ""                         # blank = provider default (groq -> openai/gpt-oss-120b)
+  provider: groq                    # primary: groq | cerebras | openrouter | gemini | ollama | openai | anthropic
+  # Fallback chain ("best free model first"): if Groq hits its daily cap, the
+  # bot fails over to the next provider instead of dropping the AI signal.
+  # Providers without a key in .env are skipped automatically.
+  providers: [groq, cerebras, openrouter]
+  model: ""                         # blank = provider default (groq/cerebras -> gpt-oss-120b)
   base_url: ""                      # blank = provider default
   max_tokens: 2000
-  # Best free option (default): Groq — a free API key (no credit card) at
-  #   console.groq.com runs openai/gpt-oss-120b, a 120B-class reasoner. Set
-  #   GROQ_API_KEY in .env. ~100 calls/day is far under the free daily cap.
-  # No-key local alternative: provider: ollama  +  `ollama pull qwen3:8b`.
-  # Without a reachable model the bot simply falls back to the momentum signal.
+  cooldown_sec: 300                 # skip a rate-limited provider this long before retrying it
+  # Free keys (no credit card): Groq (console.groq.com, fastest, ~1k req/day in
+  #   2026) and Cerebras (cloud.cerebras.ai, 1M tokens/day) both serve
+  #   gpt-oss-120b. Set GROQ_API_KEY / CEREBRAS_API_KEY in .env.
+  # OpenRouter (openrouter.ai) adds free ":free" variants → OPENROUTER_API_KEY.
+  # Local, no key, no limits: provider: ollama (needs a box with several GB RAM).
+  # If EVERY provider fails, the bot simply falls back to the momentum signal.
 
 learning:
   enabled: true                     # the self-learning loop (prediction journal + daily reflection)

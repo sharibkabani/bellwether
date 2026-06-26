@@ -20,21 +20,42 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from abc import ABC, abstractmethod
 
 import requests
 
 # Sensible defaults per provider: (base_url, default_model, key_env_var).
-# Groq's free tier serving gpt-oss-120b is the best free option for this task:
-# a 120B-class reasoner, free with one key (no card), and our ~100 calls/day are
-# far under the free daily cap. Ollama is the best no-key local fallback.
+# All free options below serve a 120B-class reasoner (gpt-oss-120b) so quality
+# is consistent no matter which one answers a given cycle:
+#   • groq      — fastest, but the 2026 free tier is ~1,000 requests/day.
+#   • cerebras  — 1M tokens/day free, no credit card; ideal failover for groq.
+#   • openrouter— free ":free" variants (lower daily caps).
+#   • gemini    — free tier exists but needs a linked billing account.
+#   • ollama    — local, no key, no limits, but needs a box with real RAM.
 PROVIDER_DEFAULTS = {
     "groq": ("https://api.groq.com/openai/v1", "openai/gpt-oss-120b", "GROQ_API_KEY"),
-    "ollama": ("http://localhost:11434/v1", "qwen3:8b", ""),
+    "cerebras": ("https://api.cerebras.ai/v1", "gpt-oss-120b", "CEREBRAS_API_KEY"),
     "openrouter": ("https://openrouter.ai/api/v1", "openai/gpt-oss-120b:free", "OPENROUTER_API_KEY"),
+    "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai", "gemini-2.5-flash", "GEMINI_API_KEY"),
+    "ollama": ("http://localhost:11434/v1", "qwen3:8b", ""),
     "openai": ("https://api.openai.com/v1", "gpt-4o-mini", "OPENAI_API_KEY"),
     "anthropic": ("", "claude-opus-4-8", "ANTHROPIC_API_KEY"),
 }
+
+# Providers that require an API key (Ollama/local servers don't).
+KEYED_PROVIDERS = {"groq", "cerebras", "openrouter", "gemini", "openai"}
+
+
+def is_rate_limit_error(exc: Exception) -> bool:
+    """True if an exception looks like a provider rate-limit / overload, so the
+    fallback chain can cool that provider down and try the next one."""
+    resp = getattr(exc, "response", None)
+    status = getattr(resp, "status_code", None)
+    if status in (429, 503):
+        return True
+    msg = str(exc).lower()
+    return "rate limit" in msg or "too many requests" in msg or "quota" in msg or "429" in msg
 
 
 def extract_json(text: str) -> str:
@@ -169,6 +190,45 @@ class AnthropicClient(LLMClient):
         raise RuntimeError("no text block in response")
 
 
+class FallbackChainClient(LLMClient):
+    """Tries an ordered list of clients ("best free model first"), failing over
+    to the next on any error. Rate-limited providers (HTTP 429) are put on a
+    short cooldown so we don't waste the first attempt on a known-throttled
+    provider every cycle. Only when *every* client fails does it raise — at
+    which point the caller (the trending strategy) falls soft to momentum."""
+
+    def __init__(self, clients: list[LLMClient], cooldown_sec: int = 300):
+        self._clients = [c for c in clients if c is not None]
+        self._cooldown = cooldown_sec
+        self._cooling: dict[int, float] = {}  # id(client) -> usable-again timestamp
+        self.name = "chain(" + ", ".join(c.name for c in self._clients) + ")"
+        self._error = ""
+
+    def _ordered(self) -> list[LLMClient]:
+        now = time.time()
+        ready = [c for c in self._clients if self._cooling.get(id(c), 0.0) <= now]
+        # If everything is cooling down, try them all anyway — better than nothing.
+        return ready or list(self._clients)
+
+    def _run(self, method: str, *args):
+        errors = []
+        for client in self._ordered():
+            try:
+                return getattr(client, method)(*args)
+            except Exception as exc:  # noqa: BLE001 — failover on any provider error
+                errors.append(f"{client.name}: {exc}")
+                if is_rate_limit_error(exc):
+                    self._cooling[id(client)] = time.time() + self._cooldown
+        self._error = " | ".join(errors)
+        raise RuntimeError(f"all LLM providers failed: {self._error}")
+
+    def complete_json(self, system: str, user: str, schema: dict | None = None) -> str:
+        return self._run("complete_json", system, user, schema)
+
+    def complete_text(self, system: str, user: str) -> str:
+        return self._run("complete_text", system, user)
+
+
 def build_client(
     provider: str,
     model: str = "",
@@ -196,8 +256,8 @@ def build_client(
 
     if not base_url:
         return None
-    # Groq/OpenRouter/OpenAI require a key; Ollama and local servers don't.
-    if provider in ("groq", "openrouter", "openai") and not api_key:
+    # Cloud providers require a key; Ollama and local servers don't.
+    if provider in KEYED_PROVIDERS and not api_key:
         return None
     return OpenAICompatibleClient(
         base_url=base_url, model=model, api_key=api_key, max_tokens=max_tokens, name=provider

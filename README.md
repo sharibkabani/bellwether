@@ -72,12 +72,13 @@ The provider is one config line:
 
 | Provider | Model | Cost | Setup |
 |---|---|---|---|
-| **Groq** (default) | `openai/gpt-oss-120b` | **Free**, best quality | free key at [console.groq.com](https://console.groq.com) (no card) → `GROQ_API_KEY` |
-| **Ollama** | `qwen3:8b` | **Free**, local, no key | `brew install ollama` → `ollama pull qwen3:8b`, set `provider: ollama` |
+| **Groq** (default) | `openai/gpt-oss-120b` | **Free**, fastest (~1k req/day in 2026) | free key at [console.groq.com](https://console.groq.com) (no card) → `GROQ_API_KEY` |
+| **Cerebras** | `gpt-oss-120b` | **Free**, 1M tokens/day, no card | key at [cloud.cerebras.ai](https://cloud.cerebras.ai) → `CEREBRAS_API_KEY` |
 | **OpenRouter** | `openai/gpt-oss-120b:free` | Free variants | `OPENROUTER_API_KEY` |
-| Anthropic / OpenAI | — | Paid | matching key + `pip install anthropic` for Claude |
+| **Ollama** | `qwen3:8b` | **Free**, local, no key | needs a box with several GB RAM; `ollama pull qwen3:8b`, set `provider: ollama` |
+| Gemini / Anthropic / OpenAI | — | Free-w/-billing · Paid | matching key (Gemini free tier needs a linked billing account) |
 
-**Why Groq + gpt-oss-120b is the default:** it's the best *free* model for this job — 120B-class reasoning for market judgment, the only large free model with strict JSON-schema decoding, and a single free key (no credit card). If you'd rather run with zero keys, switch to Ollama. If no model is reachable (no key, Ollama not running, or a call fails), the strategy **degrades gracefully** to momentum-only — the bot never crashes on a bad LLM call.
+**Why a fallback chain (best free model first):** no single free tier escapes rate limits, so `llm.providers: [groq, cerebras, openrouter]` makes the bot **fail over** on a 429 instead of dropping the AI signal — it tries the best free model first, and a rate-limited provider is put on a short cooldown so the next cycle goes straight to a working one. Groq and Cerebras both serve the same 120B-class `gpt-oss-120b`, so quality is consistent whichever answers. Providers without a key are skipped. If **every** provider is exhausted, the strategy still **degrades gracefully** to momentum-only — the bot never crashes on a bad LLM call.
 
 ### Risk controls (why live trading is defensible)
 
