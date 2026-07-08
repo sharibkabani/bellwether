@@ -89,6 +89,27 @@ def test_live_account_snapshot_maps_assets_and_balances(monkeypatch):
     assert "ETH" not in positions               # zero balance omitted
 
 
+def test_live_account_snapshot_accepts_cad_balances(monkeypatch):
+    insts = [Instrument("BTC", "Bitcoin", "Major", "XBTCAD")]
+    import base64
+
+    secret = base64.b64encode(b"x").decode()
+    v = KrakenVenue(insts, api_key="k", api_secret=secret, paper=False)
+
+    monkeypatch.setattr(v, "_public", lambda method, params: {
+        "XXBTZCAD": {"altname": "XBTCAD", "base": "XXBT"},
+    })
+    monkeypatch.setattr(v, "_private", lambda method, data: {
+        "ZCAD": "105.0000", "XXBT": "0.05",
+    })
+
+    snap = v.account_snapshot()
+    assert snap is not None
+    cash, positions = snap
+    assert abs(cash - 105.0) < 1e-6
+    assert abs(positions["BTC"] - 0.05) < 1e-9
+
+
 def test_live_snapshot_none_when_assetpairs_fails(monkeypatch):
     import base64
 

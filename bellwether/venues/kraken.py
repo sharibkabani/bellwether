@@ -254,6 +254,16 @@ class KrakenVenue:
             rationale=order.rationale,
         )
 
+    def _cash_balance(self, balances: dict) -> float:
+        for key in ("ZUSD", "USD", "ZCAD", "CAD"):
+            value = balances.get(key)
+            if value is not None:
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    continue
+        return 0.0
+
     def balance(self) -> float:
         if self._paper:
             return self._starting_cash
@@ -261,7 +271,7 @@ class KrakenVenue:
             result = self._private("Balance", {})
         except KrakenError:
             return 0.0
-        return float(result.get("ZUSD", result.get("USD", 0.0)))
+        return self._cash_balance(result)
 
     # --- account reconciliation (live only) ------------------------------
 
@@ -298,7 +308,7 @@ class KrakenVenue:
             balances = self._private("Balance", {})
         except Exception:
             return None  # any error → skip reconciliation this cycle (safe)
-        cash = float(balances.get("ZUSD", balances.get("USD", 0.0)))
+        cash = self._cash_balance(balances)
         positions: dict[str, float] = {}
         for symbol, base in base_assets.items():
             qty = float(balances.get(base, 0.0) or 0.0)
