@@ -267,13 +267,14 @@ class KrakenVenue:
 
     def _base_assets(self) -> dict[str, str]:
         """Map each universe symbol -> Kraken's base-asset code (e.g. BTC ->
-        XXBT), resolved from the public AssetPairs endpoint and cached. Using
-        Kraken's own pair->base mapping avoids guessing the X-prefix quirks."""
+        XXBT), resolved from the public AssetPairs endpoint and cached.
+
+        Fetches the full pair catalog (no ``pair=`` filter) so one bad
+        discovered altname can't break reconciliation for the whole wallet."""
         if self._base_asset_cache is not None:
             return self._base_asset_cache
-        pairs = ",".join(self._pairs.values())
         try:
-            result = self._public("AssetPairs", {"pair": pairs})
+            result = self._public("AssetPairs", {})
         except Exception:
             return {}  # any error → no map → caller skips reconciliation (safe)
         altname_to_base = {v.get("altname"): v.get("base") for v in result.values()}
