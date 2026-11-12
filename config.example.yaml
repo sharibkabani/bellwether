@@ -34,6 +34,7 @@ strategy:
   trending_weight: 2.0              # trust the AI signal more than raw momentum
   categories: []                    # [] = all; or e.g. ["Major", "L1"]
   max_symbols_per_cycle: 25         # cap AI calls per cycle to control cost
+  trending_refresh_sec: 1800        # reuse the AI read for 30 min (it forecasts days, not minutes)
   # Kraken trading universe. ``pair`` is Kraken's market code (BTC = XBTUSD,
   # DOGE = XDGUSD; most others are <SYMBOL>USD). Ignored by the sim.
   universe:

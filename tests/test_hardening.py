@@ -203,3 +203,38 @@ def test_report_hides_stale_learning_when_disabled():
     assert off.lessons == "" and off.reliability == [] and off.discovered == []
     on = build_report(pf, storage, {}, 100.0, "kraken", learning_enabled=True)
     assert "old July lesson" in on.lessons
+
+
+# --- AI signal token budget ------------------------------------------------
+
+def test_trending_reuses_last_answer_within_refresh_window():
+    from bellwether.signals.trending import TrendingStrategy
+
+    calls = []
+
+    class FakeLLM:
+        def complete_json(self, system, user, schema=None):
+            calls.append(1)
+            return '{"assessments": [{"symbol": "SOL", "expected_return": 0.03, "confidence": 0.6, "rationale": "x"}]}'
+
+    insts = [Instrument("SOL", "Solana", "L1")]
+    q = {"SOL": Quote("SOL", last=100.0, bid=100.0, ask=100.0)}
+    t = TrendingStrategy(FakeLLM(), refresh_sec=1800)
+    assert len(t.evaluate(insts, q)) == 1
+    assert len(t.evaluate(insts, q)) == 1
+    assert len(calls) == 1                      # second cycle served from cache
+    t._cache_ts -= 1801
+    t.evaluate(insts, q)
+    assert len(calls) == 2                      # refreshed after the window
+
+
+def test_trending_failure_is_logged_not_silent(capsys):
+    from bellwether.signals.trending import TrendingStrategy
+
+    class Broken:
+        def complete_json(self, *a, **k):
+            raise RuntimeError("429 Too Many Requests")
+
+    t = TrendingStrategy(Broken())
+    assert t.evaluate([Instrument("SOL")], {"SOL": Quote("SOL", 100.0)}) == []
+    assert "429" in capsys.readouterr().err

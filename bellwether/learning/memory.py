@@ -18,6 +18,7 @@ lessons stand and trading is unaffected.
 from __future__ import annotations
 
 import json
+import sys
 import os
 
 from ..signals.llm import LLMClient, extract_json
@@ -74,7 +75,10 @@ class ReflectionMemory:
                 lessons = [lessons]
             cleaned = [f"- {str(item).strip()}" for item in lessons if str(item).strip()]
             return "\n".join(cleaned)[:_MAX_LESSONS_CHARS]
-        except Exception:
+        except Exception as exc:
+            # Fail soft, but never silently: a quiet failure here is how the
+            # journal stopped growing without anyone noticing.
+            print(f"reflection: lesson generation failed: {str(exc)[:200]}", file=sys.stderr)
             return ""
 
     def save(self, day: str, lessons: str, scorecard: dict) -> None:

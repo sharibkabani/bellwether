@@ -166,6 +166,7 @@ def build_engine(cfg: Config, storage: "Storage | None" = None) -> SignalEngine:
                 per_coin_headlines=cfg.news.per_coin,
                 general_headlines=cfg.news.general,
                 lessons_provider=lessons_provider,
+                refresh_sec=cfg.strategy.trending_refresh_sec,
             )
             strategies.append((trending, cfg.strategy.trending_weight))
     if not strategies:

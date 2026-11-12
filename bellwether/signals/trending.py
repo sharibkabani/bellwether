@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import sys
+import time
 
 from ..models import Instrument, Quote, Signal
 from ..news import NewsFeed
@@ -76,8 +78,17 @@ class TrendingStrategy(Strategy):
         per_coin_headlines: int = 3,
         general_headlines: int = 6,
         lessons_provider=None,
+        refresh_sec: float = 1800.0,
     ):
         self._client = client
+        # The model forecasts 1-3 days out, so re-asking every 5-minute cycle just
+        # burns the provider's daily token cap (which is how the free Groq tier
+        # ran dry and silently killed this signal for much of each day). Reuse
+        # the last good answer for ``refresh_sec``.
+        self._refresh_sec = max(0.0, refresh_sec)
+        self._cache: list[Signal] = []
+        self._cache_ts = 0.0
+        self._cache_key: tuple[str, ...] = ()
         self._news = news
         self._max_symbols = max_symbols
         self._per_coin = per_coin_headlines
@@ -98,6 +109,13 @@ class TrendingStrategy(Strategy):
             return []
 
         batch = instruments[: self._max_symbols]
+        key = tuple(sorted(i.symbol for i in batch))
+        if (
+            self._cache
+            and key == self._cache_key
+            and time.time() - self._cache_ts < self._refresh_sec
+        ):
+            return list(self._cache)
         today = _dt.date.today().isoformat()
 
         # Pull current headlines once (fail-soft) so "trending" reflects today's
@@ -153,7 +171,9 @@ class TrendingStrategy(Strategy):
             data = json.loads(extract_json(text))  # tolerate fenced/dirty output
         except Exception as exc:  # network / parse / API error → fail soft
             self._error = str(exc)
+            print(f"trending signal unavailable: {str(exc)[:200]}", file=sys.stderr)
             return []
+        self._error = None
 
         signals = []
         for a in data.get("assessments", []):
@@ -171,4 +191,6 @@ class TrendingStrategy(Strategy):
                     rationale=str(a.get("rationale", ""))[:200],
                 )
             )
+        if signals:
+            self._cache, self._cache_ts, self._cache_key = list(signals), time.time(), key
         return signals

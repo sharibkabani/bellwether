@@ -47,6 +47,7 @@ class StrategyConfig:
     trending_weight: float = 2.0               # trust the AI signal more
     categories: list[str] = field(default_factory=list)   # empty = all
     max_symbols_per_cycle: int = 25            # cap AI calls per cycle for cost
+    trending_refresh_sec: int = 1800           # reuse the AI read this long (it forecasts days, not minutes)
     # Kraken trading universe: list of {symbol, pair, name, category}.
     universe: list[dict] = field(default_factory=list)
 
