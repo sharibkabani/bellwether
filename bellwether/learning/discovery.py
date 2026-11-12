@@ -35,6 +35,28 @@ _NOMINATE_SYSTEM = (
 )
 
 
+# Things that aren't coins to trade: stablecoins and fiat don't move, so they can
+# only ever lose fees, and they poison the hit-rate stats (see journal._grade).
+NOT_TRADABLE = frozenset({
+    "USD", "ZUSD", "CAD", "ZCAD", "EUR", "ZEUR", "GBP", "ZGBP", "JPY", "ZJPY",
+    "CHF", "AUD", "USDT", "USDC", "DAI", "PYUSD", "TUSD", "USDP", "FDUSD",
+    "USDE", "USDS", "USDG", "RLUSD", "EURC", "EURT", "EUROP",
+})
+
+# Kraken's legacy asset codes for coins we already know by another name.
+ALIASES = {"XBT": "BTC", "XXBT": "BTC", "XDG": "DOGE", "XXDG": "DOGE", "XETH": "ETH",
+           "XXRP": "XRP", "XLTC": "LTC", "XXLM": "XLM", "XXMR": "XMR"}
+
+
+def canonical_symbol(symbol: str) -> str:
+    sym = (symbol or "").upper()
+    return ALIASES.get(sym, sym)
+
+
+def is_tradable_symbol(symbol: str) -> bool:
+    return canonical_symbol(symbol) not in NOT_TRADABLE
+
+
 @dataclass
 class DiscoverySummary:
     added: list[str] = field(default_factory=list)        # symbols put on probation
@@ -118,13 +140,19 @@ class UniverseDiscovery:
             return
 
         existing = {r["symbol"] for r in self._storage.discovered()}  # any status (don't re-admit retired)
-        fresh = [
-            c
-            for c in candidates
-            if c.get("symbol", "").upper() not in self._known
-            and c.get("symbol", "").upper() not in existing
-            and float(c.get("volume_usd", 0.0)) >= self._cfg.discovery_min_volume_usd
-        ]
+        known = {canonical_symbol(s) for s in self._known}
+        existing = {canonical_symbol(s) for s in existing}
+        fresh = []
+        for c in candidates:
+            sym = canonical_symbol(c.get("symbol", ""))
+            if (
+                sym
+                and is_tradable_symbol(sym)
+                and sym not in known
+                and sym not in existing
+                and float(c.get("volume_usd", 0.0)) >= self._cfg.discovery_min_volume_usd
+            ):
+                fresh.append({**c, "symbol": sym})
         if not fresh:
             return
 

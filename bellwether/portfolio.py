@@ -162,6 +162,14 @@ class Portfolio:
         # On the first successful live sync, re-baseline P&L to the real wallet
         # so the daily report measures gains since the bot took over (not since
         # the config's notional starting_bankroll).
-        if self._storage.get_meta("live_baseline_set") != "1":
-            self._storage.set_meta("baseline_equity", str(self.equity(quotes)))
-            self._storage.set_meta("live_baseline_set", "1")
+        # Also reset the drawdown peak: a peak carried over from paper trading
+        # (e.g. 5000 vs a 100 real wallet) would trip the kill switch instantly.
+        # Self-heals a baseline that was captured as 0 (e.g. cash read in the
+        # wrong currency on the first sync).
+        baseline = float(self._storage.get_meta("baseline_equity", "0") or 0)
+        if self._storage.get_meta("live_baseline_set") != "1" or baseline <= 0:
+            equity = self.equity(quotes)
+            if equity > 0:
+                self._storage.set_meta("baseline_equity", str(equity))
+                self._storage.set_meta("peak_equity", str(equity))
+                self._storage.set_meta("live_baseline_set", "1")

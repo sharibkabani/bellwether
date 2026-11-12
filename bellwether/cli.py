@@ -94,7 +94,9 @@ def cmd_run(args) -> int:
             except Exception as exc:
                 console.print(f"[red]Reflection failed:[/] {exc}")
         _instruments, quotes = _snapshot(venue, cfg)
-        data = build_report(portfolio, storage, quotes, cfg.risk.starting_bankroll, cfg.mode)
+        data = build_report(portfolio, storage, quotes, cfg.risk.starting_bankroll, cfg.mode,
+                         learning_enabled=cfg.learning.enabled,
+                         discovery_enabled=cfg.learning.enabled and cfg.learning.discovery_enabled)
         try:
             notifier.send(data)
             console.print(f"[green]Daily report sent via {cfg.notify.channel}.[/]")
@@ -121,7 +123,9 @@ def cmd_report(args) -> int:
     cfg = load_config(args.config)
     trader, venue, portfolio, storage = build_trader(cfg, allow_live=args.live)
     _instruments, quotes = _snapshot(venue, cfg)
-    data = build_report(portfolio, storage, quotes, cfg.risk.starting_bankroll, cfg.mode)
+    data = build_report(portfolio, storage, quotes, cfg.risk.starting_bankroll, cfg.mode,
+                         learning_enabled=cfg.learning.enabled,
+                         discovery_enabled=cfg.learning.enabled and cfg.learning.discovery_enabled)
     if args.send:
         build_notifier(cfg).send(data)
         console.print(f"[green]Report sent via {cfg.notify.channel}.[/]")
@@ -179,7 +183,9 @@ def cmd_blog(args) -> int:
         return 0
     trader, venue, portfolio, storage = build_trader(cfg, allow_live=args.live)
     _instruments, quotes = _snapshot(venue, cfg)
-    data = build_report(portfolio, storage, quotes, cfg.risk.starting_bankroll, cfg.mode)
+    data = build_report(portfolio, storage, quotes, cfg.risk.starting_bankroll, cfg.mode,
+                         learning_enabled=cfg.learning.enabled,
+                         discovery_enabled=cfg.learning.enabled and cfg.learning.discovery_enabled)
     from .blog import publish_blog
 
     msg = publish_blog(cfg, data, push=not args.preview)
@@ -192,7 +198,9 @@ def cmd_status(args) -> int:
     cfg = load_config(args.config)
     trader, venue, portfolio, storage = build_trader(cfg, allow_live=args.live)
     _instruments, quotes = _snapshot(venue, cfg)
-    data = build_report(portfolio, storage, quotes, cfg.risk.starting_bankroll, cfg.mode)
+    data = build_report(portfolio, storage, quotes, cfg.risk.starting_bankroll, cfg.mode,
+                         learning_enabled=cfg.learning.enabled,
+                         discovery_enabled=cfg.learning.enabled and cfg.learning.discovery_enabled)
     console.print(render_text(data))
     storage.close()
     return 0

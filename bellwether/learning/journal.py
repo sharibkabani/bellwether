@@ -75,13 +75,20 @@ class PredictionJournal:
             actual_return = future_price / entry - 1.0
             correct = self._grade(pred["expected_return"], actual_return)
             self._storage.mark_prediction_scored(pred["id"], actual_return, correct, ts=now)
-            scored += 1
+            if correct is not None:
+                scored += 1
         return scored
 
-    def _grade(self, predicted: float, actual: float) -> int:
-        """1 if the predicted direction matched the realized one (flat = miss)."""
+    def _grade(self, predicted: float, actual: float) -> int | None:
+        """1 if a directional call matched the realized direction, 0 if not.
+
+        A prediction of ~no move is NOT graded (None). Otherwise anything that
+        never moves (stablecoins, fiat) racks up a perfect "hit rate" for
+        predicting flat on a flat tape and earns maximum trust, which is how
+        USDT/USDC/EUR became the most trusted sources. A directional call on a
+        flat tape is still a miss."""
+        if abs(predicted) < self._move_threshold:
+            return None
         if abs(actual) < self._move_threshold:
-            # Market basically didn't move; only reward a prediction that also
-            # expected ~flat. A confident directional call on a flat tape is a miss.
-            return 1 if abs(predicted) < self._move_threshold else 0
+            return 0
         return 1 if (predicted >= 0) == (actual >= 0) else 0

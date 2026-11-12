@@ -9,3 +9,4 @@ kalshi_private_key.pem
 .pytest_cache/
 .DS_Store
 *.egg-info/
+memory/

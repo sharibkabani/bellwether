@@ -25,6 +25,7 @@ risk:
   partial_take_fraction: 0.5        # ...this fraction; the remainder rides
   trailing_stop_pct: 0.04           # then trail the rest: exit if it drops 4% from its peak
   trail_activate_pct: 0.05          # only start trailing once a position has been up 5%
+  reentry_cooldown_hours: 24        # after a stop-out, bench that coin this long before re-buying
 
 strategy:
   use_momentum: true

@@ -20,6 +20,7 @@ Per-position peak and partial-taken state lives in the meta KV store.
 from __future__ import annotations
 
 import datetime as _dt
+import time
 
 from .config import RiskConfig
 from .models import Action, Direction, Order, OrderType, Quote, TradeIdea
@@ -27,6 +28,16 @@ from .portfolio import Portfolio
 from .storage import Storage
 
 _SLIPPAGE = 0.002  # 20 bps limit allowance so aggressive orders fill
+
+# --- hard safety rails --------------------------------------------------
+# These apply no matter what config.yaml says. A config can make the bot MORE
+# conservative than this, never less: an entry has to at least pay for its own
+# round trip, be more-likely-right-than-wrong, and no single coin may hold more
+# than half the account.
+ROUND_TRIP_COST = 2 * 0.0026 + 2 * 0.001   # taker fee both ways + ~10 bps spread each way
+MIN_EDGE_FLOOR = ROUND_TRIP_COST + 0.005    # expected move must beat costs by 0.5%
+MIN_CONFIDENCE_FLOOR = 0.50
+MAX_POSITION_FRACTION = 0.50                # of equity, per coin
 
 
 class RiskManager:
@@ -53,6 +64,32 @@ class RiskManager:
 
     # --- kill switch ------------------------------------------------------
 
+    # --- re-entry cooldown -------------------------------------------------
+
+    def _cooldown_key(self, symbol: str) -> str:
+        return f"cooldown:{symbol}"
+
+    def start_cooldown(self, symbol: str, now: float | None = None) -> None:
+        self._storage.set_meta(self._cooldown_key(symbol), str(now or time.time()))
+
+    def in_cooldown(self, symbol: str, now: float | None = None) -> bool:
+        """True while a coin we just stopped out of is benched. Stops buying
+        straight back into the thing that just hit our stop (and paying the
+        round trip for nothing)."""
+        stamp = self._storage.get_meta(self._cooldown_key(symbol))
+        if stamp is None:
+            return False
+        hours = self._cfg.reentry_cooldown_hours
+        return ((now or time.time()) - float(stamp)) < hours * 3600.0
+
+    def entry_thresholds(self) -> tuple[float, float]:
+        """(min expected return, min confidence) actually enforced: the config
+        values, but never looser than the hard floors."""
+        return (
+            max(self._cfg.min_expected_return, MIN_EDGE_FLOOR),
+            max(self._cfg.min_confidence, MIN_CONFIDENCE_FLOOR),
+        )
+
     def kill_switch_triggered(self, equity: float, peak_equity: float) -> bool:
         if peak_equity <= 0:
             return False
@@ -77,13 +114,15 @@ class RiskManager:
             self._storage.probation_symbols() if self._probation_size_pct < 1.0 else set()
         )
 
+        min_return, min_conf = self.entry_thresholds()
+        now = time.time()
+
         for idea in ideas:
             if open_count >= self._cfg.max_open_positions:
                 break
-            if (
-                idea.expected_return < self._cfg.min_expected_return
-                or idea.confidence < self._cfg.min_confidence
-            ):
+            if idea.expected_return < min_return or idea.confidence < min_conf:
+                continue
+            if self.in_cooldown(idea.instrument.symbol, now):
                 continue
             if idea.direction is Direction.SHORT and not self._cfg.allow_short:
                 continue
@@ -99,6 +138,7 @@ class RiskManager:
                 notional *= self._probation_size_pct  # tiny size while vetting
             notional = min(
                 notional,
+                equity * MAX_POSITION_FRACTION,
                 self._cfg.max_position_per_trade,
                 self._cfg.max_total_exposure - exposure,
                 daily_budget,
@@ -174,6 +214,7 @@ class RiskManager:
             # 1. Hard stop-loss (applies to longs and shorts).
             if pnl_pct <= -self._cfg.stop_loss_pct:
                 self._clear_exit_state(pos.symbol)
+                self.start_cooldown(pos.symbol)
                 orders.append(self._close_order(pos, quote, abs(pos.quantity), f"stop-loss {pnl_pct:.1%}"))
                 continue
             # 2. Hard take-profit ceiling.
@@ -198,6 +239,7 @@ class RiskManager:
             # 3. Trailing stop: once we've been up enough, protect the gains.
             if peak_gain >= self._cfg.trail_activate_pct and drawdown_from_peak >= self._cfg.trailing_stop_pct:
                 self._clear_exit_state(pos.symbol)
+                self.start_cooldown(pos.symbol)
                 orders.append(
                     self._close_order(
                         pos, quote, abs(pos.quantity),

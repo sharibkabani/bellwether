@@ -233,26 +233,84 @@ class KrakenVenue:
         body = {
             "pair": pair,
             "type": order.action.value,            # buy / sell
-            "ordertype": order.order_type.value.lower(),  # limit / market
+            # Kraken wants "market"/"limit"; OrderType values are "MKT"/"LMT".
+            "ordertype": "market" if order.order_type is OrderType.MARKET else "limit",
             "volume": f"{order.quantity:.8f}",
         }
         if order.order_type is OrderType.LIMIT and order.limit_price is not None:
             body["price"] = str(_round_price(order.limit_price))
         try:
-            self._private("AddOrder", body)
+            result = self._private("AddOrder", body)
         except KrakenError:
             return None
-        # AddOrder doesn't return a synchronous fill price; book at the limit
-        # (or last) price. Reconciliation with Kraken fills is left as a follow-up.
-        price = order.limit_price or fill_price
+
+        # AddOrder only acknowledges the order. Confirm what actually executed so
+        # the book records the real fill price/qty/fee, not the limit price. A
+        # limit that hasn't filled within the window is cancelled, never left
+        # resting where it could fill later behind the bot's back.
+        txids = (result or {}).get("txid") or []
+        txid = txids[0] if txids else None
+        executed = self._confirm_fill(txid) if txid else None
+        if executed is None:
+            # Couldn't confirm (no txid / query failed): fall back to the old
+            # behaviour; the next reconcile corrects quantities from the wallet.
+            price = order.limit_price or fill_price
+            return Fill(
+                symbol=order.symbol,
+                action=order.action,
+                quantity=order.quantity,
+                price=price,
+                commission=order.quantity * price * _FEE_RATE,
+                rationale=order.rationale,
+            )
+        vol, avg_price, fee = executed
+        if vol <= 0:
+            return None
         return Fill(
             symbol=order.symbol,
             action=order.action,
-            quantity=order.quantity,
-            price=price,
-            commission=order.quantity * price * _FEE_RATE,
+            quantity=vol,
+            price=avg_price,
+            commission=fee,
             rationale=order.rationale,
         )
+
+    _FILL_POLL_SEC = 1.0
+    _FILL_POLL_TRIES = 8
+
+    def _confirm_fill(self, txid: str) -> tuple[float, float, float] | None:
+        """Poll an order until it closes. Returns (executed volume, avg price,
+        fee) — volume 0 if it never filled and was cancelled — or None if the
+        order status couldn't be read at all."""
+        info = None
+        for attempt in range(self._FILL_POLL_TRIES):
+            try:
+                info = (self._private("QueryOrders", {"txid": txid}) or {}).get(txid)
+            except Exception:
+                info = None
+            if info and info.get("status") in ("closed", "canceled", "expired"):
+                break
+            if attempt < self._FILL_POLL_TRIES - 1:
+                time.sleep(self._FILL_POLL_SEC)
+        if info is None:
+            return None
+        if info.get("status") not in ("closed", "canceled", "expired"):
+            # Still open after the window: cancel, then re-read what did execute.
+            try:
+                self._private("CancelOrder", {"txid": txid})
+                info = (self._private("QueryOrders", {"txid": txid}) or {}).get(txid) or info
+            except Exception:
+                pass
+        try:
+            vol = float(info.get("vol_exec", 0.0) or 0.0)
+            avg = float(info.get("price", 0.0) or 0.0)
+            fee = float(info.get("fee", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            return None
+        if vol > 0 and avg <= 0:
+            cost = float(info.get("cost", 0.0) or 0.0)
+            avg = cost / vol if cost else 0.0
+        return vol, avg, fee
 
     def _cash_balance(self, balances: dict) -> float:
         for key in ("ZUSD", "USD", "ZCAD", "CAD"):

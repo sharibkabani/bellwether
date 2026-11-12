@@ -50,6 +50,8 @@ def build_report(
     starting_bankroll: float,
     mode: str = "sim",
     halted: bool = False,
+    learning_enabled: bool = True,
+    discovery_enabled: bool = True,
 ) -> ReportData:
     equity = portfolio.equity(quotes)
     day_start_ts = _start_of_today_ts()
@@ -68,14 +70,19 @@ def build_report(
     ]
 
     # Learning-loop context (fail-soft: missing data just renders an empty section).
-    try:
-        latest = storage.latest_reflection()
-        lessons = latest["lessons"] if latest else ""
-        config_changes = storage.changes_since(day_start_ts)
-        reliability = storage.all_reliability()
-        discovered = storage.discovered(["active", "probation"])
-    except Exception:
-        lessons, config_changes, reliability, discovered = "", [], [], []
+    # When learning is off, don't keep reprinting whatever it last wrote: stale
+    # lessons/trust tables read as current and mislead.
+    lessons, config_changes, reliability, discovered = "", [], [], []
+    if learning_enabled:
+        try:
+            latest = storage.latest_reflection()
+            lessons = latest["lessons"] if latest else ""
+            config_changes = storage.changes_since(day_start_ts)
+            reliability = storage.all_reliability()
+            if discovery_enabled:
+                discovered = storage.discovered(["active", "probation"])
+        except Exception:
+            lessons, config_changes, reliability, discovered = "", [], [], []
 
     return ReportData(
         date=_dt.date.today().isoformat(),

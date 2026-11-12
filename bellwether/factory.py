@@ -47,8 +47,11 @@ def _universe(cfg: Config, storage: "Storage | None" = None) -> list[Instrument]
     # bot trades and journals them. New discoveries take effect on next start.
     if storage is not None and cfg.learning.enabled and cfg.learning.discovery_enabled:
         known = {e["symbol"].upper() for e in entries}
+        from .learning.discovery import canonical_symbol, is_tradable_symbol
+
         for d in storage.discovered(["active", "probation"]):
-            if d["symbol"].upper() in known:
+            sym = canonical_symbol(d["symbol"])
+            if sym in known or not is_tradable_symbol(sym):
                 continue
             entries.append(
                 {

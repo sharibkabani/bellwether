@@ -36,6 +36,7 @@ class RiskConfig:
     partial_take_fraction: float = 0.5         # ...this fraction of it; the rest rides
     trailing_stop_pct: float = 0.04            # then trail the remainder: exit if it falls 4% from its peak
     trail_activate_pct: float = 0.05           # only start trailing once a position has been up this much
+    reentry_cooldown_hours: float = 24.0       # after a stop-out, bench that coin this long before re-buying
 
 
 @dataclass
