@@ -6,6 +6,7 @@
     bellwether report   # build and (optionally) send today's digest
     bellwether status   # show current portfolio
     bellwether markets  # list the universe with quotes and signals
+    bellwether news     # headlines the AI is reading, per coin, and what it concluded
 
 All commands take ``--config path.yaml``. ``mode: kraken`` trades against real
 Kraken prices; without ``--live`` it paper-fills (no keys, no risk), and with
@@ -22,7 +23,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .config import load_config
-from .factory import build_engine, build_notifier, build_reflector, build_trader
+from .factory import build_engine, build_news_inspector, build_notifier, build_reflector, build_trader
 from .report import build_report, render_text
 
 console = Console()
@@ -235,6 +236,116 @@ def cmd_markets(args) -> int:
     return 0
 
 
+def _age(dt_or_ts) -> str:
+    import datetime as _d
+
+    if dt_or_ts is None:
+        return "?"
+    if isinstance(dt_or_ts, (int, float)):
+        dt_or_ts = _d.datetime.fromtimestamp(dt_or_ts, _d.timezone.utc)
+    secs = (_d.datetime.now(_d.timezone.utc) - dt_or_ts).total_seconds()
+    if secs < 3600:
+        return f"{max(0, int(secs // 60))}m ago"
+    if secs < 86400:
+        return f"{secs / 3600:.0f}h ago"
+    return f"{secs / 86400:.0f}d ago"
+
+
+def cmd_news(args) -> int:
+    """What news the AI signal is reading right now, which headlines get
+    attached to which coin, and what the model concluded on its last run."""
+    from .news import DEFAULT_FEEDS
+
+    cfg = load_config(args.config)
+    trader, venue, portfolio, storage = build_trader(cfg, allow_live=False)
+    instruments, quotes = _snapshot(venue, cfg)
+    inspector = build_news_inspector(cfg, storage)
+    batch = instruments[: cfg.strategy.max_symbols_per_cycle]
+
+    if not cfg.news.enabled:
+        console.print("[yellow]News is disabled (news.enabled: false): the AI sees prices only.[/]")
+    headlines = inspector.fetch_headlines()
+    prompt, coin_news = inspector.build_prompt(batch, quotes, headlines)
+    if args.prompt:
+        console.print(prompt, markup=False, highlight=False)
+        storage.close()
+        return 0
+
+    feeds = cfg.news.feeds or DEFAULT_FEEDS
+    sources = sorted({h.source for h in headlines})
+    freshest = _age(headlines[0].published) if headlines else "-"
+    console.print(
+        f"[bold]News feed[/] · {len(headlines)} headlines from "
+        f"{len(sources)}/{len(feeds)} feeds ({', '.join(sources) or 'none reachable'}) · newest {freshest}"
+    )
+
+    # 1. Coin-specific news attached to each coin in the prompt.
+    t = Table(title="Coin news the AI sees (attached under each coin)", show_lines=False)
+    for col in ("Coin", "Headline", "Source", "Age"):
+        t.add_column(col, overflow="fold")
+    used_titles = set()
+    for inst in batch:
+        rel = coin_news.get(inst.symbol, [])
+        if not rel:
+            t.add_row(inst.symbol, "[dim]no coin-specific news: judged on price + general headlines[/]", "", "")
+            continue
+        for i, h in enumerate(rel):
+            used_titles.add(h.title)
+            t.add_row(inst.symbol if i == 0 else "", h.title, h.source, _age(h.published))
+    console.print(t)
+
+    # 2. General headlines sent with every request.
+    general = headlines[: cfg.news.general]
+    if general:
+        g = Table(title="General headlines (sent for market context)")
+        for col in ("Headline", "Source", "Age"):
+            g.add_column(col, overflow="fold")
+        for h in general:
+            used_titles.add(h.title)
+            g.add_row(h.title, h.source, _age(h.published))
+        console.print(g)
+
+    unused = [h for h in headlines if h.title not in used_titles]
+    console.print(f"[dim]{len(unused)} other fetched headlines matched no coin and weren't sent"
+                  + (" (shown below)" if args.all and unused else " (bw news --all to list)") + "[/]")
+    if args.all:
+        for h in unused:
+            console.print(f"  [dim]· {h.title} ({h.source}, {_age(h.published)})[/]")
+
+    # 3. What the model concluded last time (from the prediction journal).
+    rows = storage._conn.execute(
+        """SELECT p.symbol, p.expected_return, p.confidence, p.rationale, p.ts
+           FROM predictions p
+           JOIN (SELECT symbol, MAX(ts) AS ts FROM predictions WHERE source = 'trending' GROUP BY symbol) last
+             ON p.symbol = last.symbol AND p.ts = last.ts
+           WHERE p.source = 'trending'"""
+    ).fetchall()
+    if rows:
+        by_sym = {r["symbol"]: r for r in rows}
+        a = Table(title="What the AI concluded (latest call per coin)")
+        for col in ("Coin", "Exp.", "Conf", "Why", "When"):
+            a.add_column(col, overflow="fold")
+        for inst in batch:
+            r = by_sym.get(inst.symbol)
+            if r is None:
+                a.add_row(inst.symbol, "-", "-", "[dim]no AI call recorded[/]", "")
+                continue
+            a.add_row(inst.symbol, f"{r['expected_return']:+.1%}", f"{r['confidence']:.0%}",
+                      r["rationale"] or "", _age(r["ts"]))
+        console.print(a)
+        newest = max(r["ts"] for r in rows)
+        import time as _t
+        if _t.time() - newest > 2 * cfg.strategy.trending_refresh_sec + cfg.poll_interval_sec:
+            console.print("[yellow]The last AI call is older than expected: the AI signal may be failing "
+                          "(check `journalctl -u bellwether | grep trending`).[/]")
+    elif cfg.learning.enabled:
+        console.print("[dim]No AI calls recorded yet.[/]")
+    else:
+        console.print("[dim]AI conclusions are only recorded when learning is enabled.[/]")
+    storage.close()
+    return 0
+
+
 def _banner(cfg, live: bool = False) -> None:
     if not cfg.is_live:
         console.print("[bold green]● SIM MODE — offline simulator, no real money[/]")
@@ -271,6 +382,10 @@ def main(argv=None) -> int:
     rep = sub.add_parser("report")
     rep.add_argument("--send", action="store_true", help="send via the notifier")
     rep.set_defaults(func=cmd_report)
+    nws = sub.add_parser("news", help="headlines the AI is reading and what it concluded")
+    nws.add_argument("--all", action="store_true", help="also list fetched headlines that weren't sent")
+    nws.add_argument("--prompt", action="store_true", help="print the exact prompt the AI receives")
+    nws.set_defaults(func=cmd_news)
     blg = sub.add_parser("blog")
     blg.add_argument("--preview", action="store_true", help="build the site locally without pushing")
     blg.set_defaults(func=cmd_blog)

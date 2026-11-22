@@ -102,31 +102,22 @@ class TrendingStrategy(Strategy):
     def available(self) -> bool:
         return self._client is not None
 
-    def evaluate(
-        self, instruments: list[Instrument], quotes: dict[str, Quote]
-    ) -> list[Signal]:
-        if self._client is None or not instruments:
+    def fetch_headlines(self) -> list:
+        """Current headlines (fail-soft) so "trending" reflects today's news,
+        not the model's training cutoff."""
+        if self._news is None:
+            return []
+        try:
+            return self._news.headlines()
+        except Exception:
             return []
 
-        batch = instruments[: self._max_symbols]
-        key = tuple(sorted(i.symbol for i in batch))
-        if (
-            self._cache
-            and key == self._cache_key
-            and time.time() - self._cache_ts < self._refresh_sec
-        ):
-            return list(self._cache)
+    def build_prompt(self, batch: list[Instrument], quotes: dict[str, Quote], headlines: list):
+        """The exact prompt sent to the model, plus which headlines were attached
+        to each coin. Shared with ``bw news`` so what it shows is what the model
+        actually gets, not a re-creation."""
         today = _dt.date.today().isoformat()
-
-        # Pull current headlines once (fail-soft) so "trending" reflects today's
-        # news, not the model's training cutoff.
-        headlines = []
-        if self._news is not None:
-            try:
-                headlines = self._news.headlines()
-            except Exception:
-                headlines = []
-
+        coin_news: dict[str, list] = {}
         lines = []
         for inst in batch:
             q = quotes.get(inst.symbol)
@@ -135,10 +126,10 @@ class TrendingStrategy(Strategy):
             if q and q.prev_close:
                 chg = f", {((q.last / q.prev_close) - 1):+.1%} vs prev close"
             line = f"- {inst.symbol} ({inst.name or inst.symbol}, {inst.category}): {px}{chg}"
-            if headlines:
-                rel = NewsFeed.relevant(headlines, inst.symbol, inst.name, self._per_coin)
-                for h in rel:
-                    line += f"\n    • news: {h.title}"
+            rel = NewsFeed.relevant(headlines, inst.symbol, inst.name, self._per_coin) if headlines else []
+            coin_news[inst.symbol] = rel
+            for h in rel:
+                line += f"\n    • news: {h.title}"
             lines.append(line)
 
         general = ""
@@ -165,6 +156,24 @@ class TrendingStrategy(Strategy):
             + "\n"
             + _FORMAT
         )
+        return prompt, coin_news
+
+    def evaluate(
+        self, instruments: list[Instrument], quotes: dict[str, Quote]
+    ) -> list[Signal]:
+        if self._client is None or not instruments:
+            return []
+
+        batch = instruments[: self._max_symbols]
+        key = tuple(sorted(i.symbol for i in batch))
+        if (
+            self._cache
+            and key == self._cache_key
+            and time.time() - self._cache_ts < self._refresh_sec
+        ):
+            return list(self._cache)
+        headlines = self.fetch_headlines()
+        prompt, _coin_news = self.build_prompt(batch, quotes, headlines)
 
         try:
             text = self._client.complete_json(_SYSTEM, prompt, schema=_SCHEMA)

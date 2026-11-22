@@ -133,6 +133,28 @@ def build_memory(cfg: Config, storage: "Storage", client=None):
     return ReflectionMemory(storage, cfg.learning.memory_file, client=client)
 
 
+def build_news_inspector(cfg: Config, storage: "Storage | None" = None) -> TrendingStrategy:
+    """A TrendingStrategy wired exactly like the live one (same feeds, limits and
+    journal lessons) but with no model attached: for ``bw news`` to show the
+    prompt the AI receives without spending an LLM call."""
+    from .news import NewsFeed
+
+    news = None
+    if cfg.news.enabled:
+        news = NewsFeed(feeds=cfg.news.feeds or None, max_headlines=cfg.news.max_headlines)
+    lessons_provider = None
+    if storage is not None and cfg.learning.enabled:
+        lessons_provider = build_memory(cfg, storage).lessons_text
+    return TrendingStrategy(
+        None,
+        news=news,
+        max_symbols=cfg.strategy.max_symbols_per_cycle,
+        per_coin_headlines=cfg.news.per_coin,
+        general_headlines=cfg.news.general,
+        lessons_provider=lessons_provider,
+    )
+
+
 def build_engine(cfg: Config, storage: "Storage | None" = None) -> SignalEngine:
     weight_fn = None
     lessons_provider = None

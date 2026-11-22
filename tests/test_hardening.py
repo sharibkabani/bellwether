@@ -238,3 +238,43 @@ def test_trending_failure_is_logged_not_silent(capsys):
     t = TrendingStrategy(Broken())
     assert t.evaluate([Instrument("SOL")], {"SOL": Quote("SOL", 100.0)}) == []
     assert "429" in capsys.readouterr().err
+
+
+# --- bw news ---------------------------------------------------------------
+
+def test_news_prompt_matches_what_the_model_is_sent():
+    import datetime as dt
+    from bellwether.news import Headline
+    from bellwether.signals.trending import TrendingStrategy
+
+    now = dt.datetime.now(dt.timezone.utc)
+    heads = [Headline("Solana ETF approved", "coindesk.com", now),
+             Headline("Fed holds rates", "decrypt.co", now)]
+    sent = []
+
+    class FakeLLM:
+        def complete_json(self, system, user, schema=None):
+            sent.append(user)
+            return '{"assessments": []}'
+
+    class FakeNews:
+        def headlines(self):
+            return heads
+
+    insts = [Instrument("SOL", "Solana", "L1"), Instrument("ADA", "Cardano", "L1")]
+    q = {"SOL": Quote("SOL", 100.0), "ADA": Quote("ADA", 0.5)}
+    t = TrendingStrategy(FakeLLM(), news=FakeNews(), general_headlines=1)
+    t.evaluate(insts, q)
+    prompt, coin_news = TrendingStrategy(None, news=FakeNews(), general_headlines=1).build_prompt(insts, q, heads)
+    assert sent[0].split("\n", 1)[1] == prompt.split("\n", 1)[1]
+    assert [h.title for h in coin_news["SOL"]] == ["Solana ETF approved"]
+    assert coin_news["ADA"] == []
+
+
+def test_news_cli_runs(tmp_path, monkeypatch, capsys):
+    from bellwether import cli
+
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text(f"mode: sim\ndata_dir: {tmp_path}\nnews:\n  enabled: false\n")
+    assert cli.main(["--config", str(cfg), "news"]) == 0
+    assert "Coin news the AI sees" in capsys.readouterr().out
